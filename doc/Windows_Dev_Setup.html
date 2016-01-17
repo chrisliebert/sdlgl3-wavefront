@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Setting Up an Open-Source Windows Development Environment</title>
+</head>
+<body>
+<h1>Setting Up an Open-Source Windows Development Environment</h1>
+<p>Some hacks will be described for building CMake projects with SDL2, SDL2_image and GLEW with C++ on Windows.</p>
+<h2>Downloads</h2>
+<h3>Tools</h3>
+<ol>
+	<li>CMake, used to generate Makefiles or IDE projects: <a href="http://www.cmake.org/">http://www.cmake.org/</a></li>
+	<li>pkg-config or pkg-config-lite, a modified variant that is easy to use on Windows: <a href="http://sourceforge.net/projects/pkgconfiglite/">http://sourceforge.net/projects/pkgconfiglite/</a></li>
+	<li>TDM-GCC (Recommended) a Windows build of GCC that supports most of latest C++ features: <a href="http://tdm-gcc.tdragon.net/">http://tdm-gcc.tdragon.net/</a></li>
+	<li>Codeblocks (Recommended) a cross-platform C++ IDE: <a href="http://www.codeblocks.org/">http://www.codeblocks.org/</a></li>
+</ol>
+<h3>Libraries</h3>
+<ol>
+	<li>SDL2, a cross-platform toolkit for window management and event handling: <a href="https://www.libsdl.org/download-2.0.php">https://www.libsdl.org/download-2.0.php</a></li>
+	<li>The following header file (patch for SDL version 2.0.3): <a href="https://hg.libsdl.org/SDL/raw-file/e217ed463f25/include/SDL_platform.h">https://hg.libsdl.org/SDL/raw-file/e217ed463f25/include/SDL_platform.h</a> which is described <a href="http://stackoverflow.com/questions/22446008/winapifamily-h-no-such-file-or-directory-when-compiling-sdl-in-codeblocks">here</a></li>
+	<li>SDL2_image, an extension to SDL2 that can load various image formats: <a href="https://www.libsdl.org/projects/SDL_image/">https://www.libsdl.org/projects/SDL_image/</a></li>
+	<li>GLEW, The OpenGL Extension Wrangler library which saves tedious effort when trying to support various platforms by loading extensions when necessary features do not exist in the core profile: <a href="http://glew.sourceforge.net/">http://glew.sourceforge.net/</a></li>
+</ol>
+<h3>Installation</h3>
+<ol>
+	<li>Run the TDM-GCC installer. Only the 32-bit version has been tested; 64-bit may require additional troubleshooting.</li>
+	<li>Run the CMake installer.</li>
+	<li>Extract pkg-config-lite and add the bin directory to PATH. This can be done by right-clicking on "My Computer" or "This PC" from windows explorer and selecting "properties". In the advanced tab click "Environment Variables" then under "System Variables" edit PATH.</li>
+	<li>Extract SDL2, SDL2_image and GLEW.</li>
+	<li>Replace include\SDL_platform.h with the patched version for 2.0.3.</li>
+	<li>Copy the .pc files from SDL2 and SDL2_image inside the i686-w64-mingw32\lib\pkg-config directories to the lib directory of pkg-config-lite. Alternately if using existing installation pkg-config set the PKG_CONFIG_PATH system variable to include directories containing .pc files.</li>
+	<li>Modify prefix variable in sdl2.pc and SDL2_image.pc: it should be a Windows path in the for "C:/path/to/SDL2" where \ is replaced with /. </li>
+	<li>Append "-lole32 -loleaut32 -limm32 -lwinmm -lversion" to "Libs:" line in sdl2.pc.</li>
+	<li>Build GLEW using CMake, TDM and Codeblocks.</li>
+	<li>Open share\cmake-3.3\Modules\FindGLEW.cmake from the CMake installation directory and set the GLEW_INCLUDE_DIR and GLEW_LIBRARY variables before GLEW_INCLUDE_DIRS and GLEW_LIBRARIES are set. FindGLEW.cmake file should look something like this:<br>
+<b>Example:</b>
+<pre>
+# ...
+find_path(GLEW_INCLUDE_DIR GL/glew.h)
+find_library(GLEW_LIBRARY NAMES GLEW glew32 glew glew32s PATH_SUFFIXES lib64)
+
+set(GLEW_INCLUDE_DIR C:/dev/libs/glew-1.12.0/include)
+set(GLEW_LIBRARY C:/dev/libs/glew-1.12.0-tdm/lib/libglew32.a)
+
+set(GLEW_INCLUDE_DIRS ${GLEW_INCLUDE_DIR})
+set(GLEW_LIBRARIES ${GLEW_LIBRARY})
+
+include(${CMAKE_CURRENT_LIST_DIR}/FindPackageHandleStandardArgs.cmake)
+find_package_handle_standard_args(GLEW
+                                  REQUIRED_VARS GLEW_INCLUDE_DIR GLEW_LIBRARY)
+
+if(GLEW_FOUND AND NOT TARGET GLEW::GLEW)
+  add_library(GLEW::GLEW UNKNOWN IMPORTED)
+  set_target_properties(GLEW::GLEW PROPERTIES
+    IMPORTED_LOCATION "${GLEW_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${GLEW_INCLUDE_DIRS}")
+endif()
+
+mark_as_advanced(GLEW_INCLUDE_DIR GLEW_LIBRARY)
+</pre>
+</ol>
+<p>CMake should now function the same as it would on a Unix installation with compiler libraries installed.</p>
+</body>
+</html>
