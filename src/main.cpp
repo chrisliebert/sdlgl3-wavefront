@@ -287,15 +287,12 @@ int main(int argc, char** argv)
 
 	std::string modelPath(MODEL_DIRECTORY);
 	modelPath += std::string(DIRECTORY_SEPARATOR) + std::string(argv[1]);
-	std:: ifstream objFile(modelPath);
-	if (!objFile)
+	std:: ifstream objFile(modelPath.c_str());
+	if (false == objFile.is_open())
 	{
 		std::cerr << "Unable to load " << modelPath << std::endl;
-		objFile.close();
 		return -2;
 	}
-	objFile.close();
-
 
 	MyGLApp objViewer(argv[1]);
 	objViewer.start();
