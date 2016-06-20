@@ -24,4 +24,11 @@ typedef struct
     char normalTexName[64];
 } Material;
 
+typedef struct
+{
+	int width, height;
+	int mode;
+	unsigned char* data;
+} Texture;
+
 #endif // _MATERIAL_H_

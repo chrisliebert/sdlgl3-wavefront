@@ -94,7 +94,8 @@ Shader::Shader(std::string& _filePath)
 
 Shader::Shader()
 {
-
+	id = -1;
+	filePath = "";
 }
 
 Shader::~Shader()

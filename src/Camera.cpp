@@ -19,15 +19,15 @@ void Camera::aim(double x, double y)
     verticalAngle += y;
 
     direction = glm::vec3(
-                    cos(verticalAngle) * sin(horizontalAngle),
-                    sin(verticalAngle),
-                    cos(verticalAngle) * cos(horizontalAngle)
-                );
+		cos(verticalAngle) * sin(horizontalAngle),
+		sin(verticalAngle),
+		cos(verticalAngle) * cos(horizontalAngle)
+	);
     right = glm::vec3(
-                sin(horizontalAngle - M_PI/2.0),
-                0.0,
-                cos(horizontalAngle - M_PI/2.0)
-            );
+		sin(horizontalAngle - M_PI/2.0),
+		0.0,
+		cos(horizontalAngle - M_PI/2.0)
+	);
 
     up = glm::cross(right, direction);
 }

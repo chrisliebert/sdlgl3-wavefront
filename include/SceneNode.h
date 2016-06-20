@@ -5,13 +5,15 @@
 #include "Material.h"
 #include "GpuProgram.h"
 
+/*
 typedef struct {
     float top, bottom, left, right, front, back;
 } BoundingBox;
+*/
 
 typedef struct {
-    std::string name;
-    std::string material;
+	char name[64];
+    char material[64];
 	Vertex* vertexData;
 	size_t vertexDataSize;
     glm::mat4 modelViewMatrix;
@@ -28,6 +30,6 @@ typedef struct {
     GLfloat lx, ly, lz;
 } SceneNode;
 
-BoundingBox* getBoundingBox(SceneNode*);
+//BoundingBox* getBoundingBox(SceneNode*);
 
 #endif

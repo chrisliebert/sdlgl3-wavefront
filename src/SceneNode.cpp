@@ -1,5 +1,5 @@
 #include "SceneNode.h"
-
+/*
 BoundingBox* getBoundingBox(SceneNode* mesh)
 {
     BoundingBox *bbox = new BoundingBox;
@@ -18,3 +18,4 @@ BoundingBox* getBoundingBox(SceneNode* mesh)
     }
     return bbox;
 }
+*/
