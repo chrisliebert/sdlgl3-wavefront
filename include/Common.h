@@ -1,17 +1,9 @@
 #ifndef _COMMON_H_
 #define _COMMON_H_
 
-#define GLEW_STATIC 1
-#define _DEBUG 0
-
-#include <GL/glew.h>
-#include <SDL.h>
-#include <SDL_opengl.h>
-
-#include <stdlib.h>
-#include <stdio.h>
-
 #include <algorithm>
+#include <cstdlib>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -26,6 +18,8 @@
 #include <glm/mat4x4.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <SDL.h>
+#include "glad/glad.h"
 #include "tiny_obj_loader.h"
 
 #define CACHE_DIRECTORY "cache"
@@ -41,10 +35,8 @@
     #define DIRECTORY_SEPARATOR "/"
 #endif
 
-// MSVC uses strcpy_s instead of strcpy
-#ifdef _MSC_VER
-#define strcpy(A, B) strcpy_s(A, B)
-#endif
+#define MAX_MATERIAL_NAME_STRING_LENGTH 256
+#define MAX_NODE_NAME_STRING_LENGTH 256
 
 typedef struct {
     GLfloat vertex[3];

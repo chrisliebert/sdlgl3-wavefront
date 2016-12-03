@@ -45,6 +45,7 @@ void MyGLApp::errorMsg(const char* title)
 
 MyGLApp::MyGLApp(const char* filename) {
 	init(filename);
+	sceneLoaded = false;
 }
 
 MyGLApp::~MyGLApp()
@@ -59,11 +60,9 @@ MyGLApp::~MyGLApp()
 #endif
 }
 
-
 static int LoadScene(void* appPtr) {
-	MyGLApp* app = (MyGLApp*) appPtr;
-
 	bool sceneLoaded = false;
+	MyGLApp* app = (MyGLApp*) appPtr;
 	std::string cacheFileName(CACHE_DIRECTORY);
 	cacheFileName += std::string(DIRECTORY_SEPARATOR) + std::string(app->modelFilename) + ".bin";
 	app->renderer.cacheFileName = cacheFileName;
@@ -85,7 +84,7 @@ static int LoadScene(void* appPtr) {
 
 	if(!sceneLoaded) {
 		std::cerr << "Unable to load scene" << std::endl;
-		exit(7);
+		return -7;
 	}
 	app->sceneLoaded = true;
 	return 0;
@@ -160,22 +159,33 @@ void MyGLApp::init(const char* filename) {
 				runLevel = 0;
 				return;
 			}
-			/* This makes our buffer swap synchronized with the monitor's vertical refresh */
 			SDL_GL_SetSwapInterval(0);
 
-			//GLEW
-			glewExperimental = GL_TRUE;
-			GLenum err = glewInit();
-			checkForGLError();
-			if (GLEW_OK != err)
-			{
-				// Problem: glewInit failed, something is seriously wrong.
-				const char* errorStr = (char*)glewGetErrorString(err);
-				errorMsg(errorStr);
-
+			if(!gladLoadGL()) {
+			  std::cerr << "Something went wrong initializing OpenGL!" << std::endl;
 			}
 
-			//std::cout << "Using GLEW " << glewGetString(GLEW_VERSION) << std::endl;
+			#ifdef GLAD_DEBUG
+			  // before every opengl call call pre_gl_call
+			  glad_set_pre_callback(pre_gl_call);
+
+			  // post callback checks for glGetError by default
+
+			  // don't use the callback for glClear
+			  // (glClear could be replaced with your own function)
+			  glad_debug_glClear = glad_glClear;
+			#endif
+
+			gladLoadGLLoader(&SDL_GL_GetProcAddress);
+			std::cerr << "OpenGL " << GLVersion.major << "." << GLVersion.minor << std::endl;
+			if (GLVersion.major < 2) {
+			  std::cerr << "Your system doesn't support OpenGL >= 2!" << std::endl;;
+			  exit(-1);
+			}
+
+			std::cerr << "OpenGL " << glGetString(GL_VERSION) << " GLSL " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
+
+			checkForGLError();
 			//SDL_SetWindowTitle(window, (const char*)glGetString(GL_VERSION));
 		}
 
@@ -195,12 +205,6 @@ void MyGLApp::init(const char* filename) {
 
 		checkForGLError();
 
-		// Get largest anisotropic filtering level
-		GLfloat fLargest;
-		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &fLargest);
-		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, fLargest);
-
-		checkForGLError();
 
 		// Enable depth test
 		glEnable(GL_DEPTH_TEST);
@@ -388,10 +392,9 @@ void MyGLApp::start()
 			if(closeOnLoad) {
 				runLevel = 0;
 			}
-		}
-
-		if(sceneFinishedLoading)
+		} else if(sceneFinishedLoading) {
 			renderer.render(camera);
+		}
 
 		SDL_GL_SwapWindow(window);
 	}
@@ -400,7 +403,7 @@ void MyGLApp::start()
 	SDL_HideWindow(window);
 
 	if(!sceneFinishedLoading) {
-		// Wait for loader to finish if exited before loading finished
+		//Wait for loader to finish if exited before loading finished
 		int ret = 0;
 		SDL_WaitThread(sceneLoaderThread, &ret);
 		if(ret != 0) {

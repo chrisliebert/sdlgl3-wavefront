@@ -12,8 +12,8 @@ typedef struct {
 */
 
 typedef struct {
-	char name[64];
-    char material[64];
+	char name[MAX_NODE_NAME_STRING_LENGTH];
+    char material[MAX_MATERIAL_NAME_STRING_LENGTH];
 	Vertex* vertexData;
 	size_t vertexDataSize;
     glm::mat4 modelViewMatrix;

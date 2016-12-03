@@ -55,6 +55,14 @@ void checkForGLSLError(GLuint programId) {
 	}
 }
 
+// GLAD_DEBUG is only defined if the c-debug generator was used
+#ifdef GLAD_DEBUG
+// logs every gl call to the console
+void pre_gl_call(const char *name, void *funcptr, int len_args, ...) {
+    std::cout << "Calling: " << name << " (" << len_args << " arguments)" << std::endl;
+}
+#endif
+
 void parseLine(std::string& line, std::map<std::string, std::string>& vars)
 {
 	const char* l = line.c_str();
@@ -464,11 +472,11 @@ void Renderer::addWavefront(const char* fileName, glm::mat4 matrix)
 		memcpy((void*)& m.shininess, (void*)& materials[i].shininess, sizeof(float));
 		memcpy((void*)& m.dissolve, (void*)& materials[i].dissolve, sizeof(float));
 
-		strcpy(m.name, materials[i].name.c_str());
-		strcpy(m.ambientTexName, materials[i].ambient_texname.c_str());
-		strcpy(m.diffuseTexName, materials[i].diffuse_texname.c_str());
-		strcpy(m.normalTexName, materials[i].specular_highlight_texname.c_str());
-		strcpy(m.specularTexName, materials[i].specular_texname.c_str());
+		strncpy(m.name, materials[i].name.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
+		strncpy(m.ambientTexName, materials[i].ambient_texname.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
+		strncpy(m.diffuseTexName, materials[i].diffuse_texname.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
+		strncpy(m.normalTexName, materials[i].specular_highlight_texname.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
+		strncpy(m.specularTexName, materials[i].specular_texname.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
 
 		addMaterial(&m);
 	}
@@ -494,8 +502,8 @@ void Renderer::addWavefront(const char* fileName, glm::mat4 matrix)
 				{
 					//new node
 					SceneNode sceneNode;
-					strcpy(&sceneNode.name[0], shapes[i].name.c_str());
-					strcpy(&sceneNode.material[0], materials[lastMaterialId].name.c_str());
+					strncpy(&sceneNode.name[0], shapes[i].name.c_str(), MAX_NODE_NAME_STRING_LENGTH);
+					strncpy(&sceneNode.material[0], materials[lastMaterialId].name.c_str(), MAX_NODE_NAME_STRING_LENGTH);
 
 					sceneNode.vertexDataSize = mVertexData.size();
 					sceneNode.vertexData = new Vertex[sceneNode.vertexDataSize];
@@ -527,7 +535,7 @@ void Renderer::addWavefront(const char* fileName, glm::mat4 matrix)
 
 			if((shapes[i].mesh.indices[j] * 2) >= shapes[i].mesh.texcoords.size())
 			{
-				std::cerr << "Unable to put texcoord in " << shapes[i].name << std::endl;
+				//std::cerr << "Unable to put texcoord in " << shapes[i].name << std::endl;
 				v.textureCoordinate[0] = 0.f;
 				v.textureCoordinate[1] = 0.f;
 			} else {
@@ -539,8 +547,8 @@ void Renderer::addWavefront(const char* fileName, glm::mat4 matrix)
 			if(j == shapes[i].mesh.indices.size() - 1)
 			{
 				SceneNode sceneNode;
-				strcpy(&sceneNode.name[0], shapes[i].name.c_str());
-				strcpy(&sceneNode.material[0], materials[lastMaterialId].name.c_str());
+				strncpy(&sceneNode.name[0], shapes[i].name.c_str(), MAX_NODE_NAME_STRING_LENGTH);
+				strncpy(&sceneNode.material[0], materials[lastMaterialId].name.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
 
 				sceneNode.vertexDataSize = mVertexData.size();
 				sceneNode.vertexData = new Vertex[sceneNode.vertexDataSize];
@@ -565,7 +573,7 @@ void Renderer::addWavefront(const char* fileName, glm::mat4 matrix)
  * 	[------material array----]
  * 	[----scene node array----]
  * 	[----vertex data array---]
- * 	[---texture data array---] <- {name[64], Texture{width,height,mode,*data}, data}
+ * 	[---texture data array---]
  */
 typedef struct BinCacheFileHeader {
 	size_t numMaterials;
@@ -614,18 +622,19 @@ static int CreateBinCache(void *rendererPtr)
 		binFile.write((char*)v, sizeof(Vertex));
 	}
 
-	renderer->vertexData.clear(); // vertex data no longer used
-
 	// Write textures to array at end of file
 	std::map<std::string, Texture>::iterator it3;
-	char name[64];
+	char name[MAX_MATERIAL_NAME_STRING_LENGTH];
 	for(it3=renderer->textures.begin(); it3!=renderer->textures.end(); ++it3) {
 		Texture* texture = &it3->second;
-		strcpy(&name[0], it3->first.c_str());
-		binFile.write(&name[0], 64);
-		binFile.write((char*) texture, sizeof(Texture));
-		size_t dataSize = (size_t) texture->width * texture->height * 4;
-		binFile.write((char*)texture->data, dataSize);
+		strncpy(&name[0], it3->first.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
+		binFile.write(&name[0], sizeof(char) * MAX_MATERIAL_NAME_STRING_LENGTH);
+		binFile.write((char*) &texture->bpp, sizeof(unsigned));
+		binFile.write((char*) &texture->mode, sizeof(int));
+		binFile.write((char*) &texture->width, sizeof(unsigned));
+		binFile.write((char*) &texture->height, sizeof(unsigned));
+		size_t dataSize = (size_t) texture->width * texture->height * texture->bpp;
+		binFile.write((char*) &texture->data, dataSize);
 	}
 
 	binFile.close();
@@ -767,18 +776,20 @@ bool Renderer::buildScene(Camera& camera, const char* filename)
 
 	size_t numTexturesLoaded = 0;
 	// Load textures from the end of the file
-	char textureFileName[64];
+	char textureFileName[MAX_MATERIAL_NAME_STRING_LENGTH];
 	while(numTexturesLoaded < header.numTextures) {
 		textureFileName[0] = '\0';
 		Texture texture;
-		binFile.read((char*) &textureFileName[0], 64);
-		binFile.read((char*) &texture, sizeof(Texture));
-		size_t imageSize = texture.width * texture.height * 4;
+		binFile.read((char*) &textureFileName[0], MAX_MATERIAL_NAME_STRING_LENGTH);
+		binFile.read((char*) &texture.bpp, sizeof(unsigned));
+		binFile.read((char*) &texture.mode, sizeof(int));
+		binFile.read((char*) &texture.width, sizeof(unsigned));
+		binFile.read((char*) &texture.height, sizeof(unsigned));
+		size_t imageSize = texture.width * texture.height * texture.bpp;
 		if(imageSize == 0) {
 			std::cerr << "Unable to load image size of 0: " << textureFileName << std::endl;
 			exit(9);
 		}
-
 		texture.data = new unsigned char[imageSize];
 		binFile.read((char*)texture.data, imageSize);
 		textures[std::string(&textureFileName[0])] = texture;
@@ -795,7 +806,7 @@ void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)
 {
 	if(configLoader->getBool("renderer.verbose")) std::cout << "Buffering to GPU" << std::endl;
 	// Load textures
-
+	checkForGLError();
 	for(int i=0; i <sceneNodes.size(); i++)
 	{
 		if(materials.find(sceneNodes[i].material) == materials.end()  )
@@ -1092,7 +1103,7 @@ void Renderer::render(Camera* camera)
 		glm::vec4 position(sceneNodes[i].lx, sceneNodes[i].ly, sceneNodes[i].lz, 1.f);
 
 		// Frustum culling test
-		if(frustum.spherePartiallyInFrustum(position.x, position.y, position.z, sceneNodes[i].boundingSphere) > 0)
+		if( frustum.spherePartiallyInFrustum(position.x, position.y, position.z, sceneNodes[i].boundingSphere) > 0)
 		{
 
 			gpuProgram->use();
@@ -1129,14 +1140,10 @@ void Renderer::render(Camera* camera)
 			glDrawRangeElementsBaseVertex(sceneNodes[i].primativeMode, sceneNodes[i].startPosition, sceneNodes[i].endPosition,
 					(sceneNodes[i].endPosition - sceneNodes[i].startPosition), GL_UNSIGNED_INT, (void*)(0), sceneNodes[i].startPosition);
 
-		}
-		else
-		{
-			//std::cerr << "Clipping " << sceneNodes[i].name << std::endl;
-		}
 #if _DEBUG
-		checkForGLError();
+			checkForGLError();
 #endif
+		}
 	}
 
 	if(shadowsEnabled == 1) glDeleteTextures(1, &shadowMap);

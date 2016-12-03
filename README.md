@@ -5,7 +5,7 @@ sdlgl3-wavefront is a starting point template for shader-based OpenGL 3.3 applic
 Frustum extraction and testing algorithms from http://www.crownandcutlass.com/features/technicaldetails/frustum.html have been incorporated into Frustum.cpp. After 3D model/models are loaded each disconnected mesh is put into a SceneNode structure and a bounding radius is calculated. The Renderer.renderer() is passed a camera object so the frustum matrix can be extracted every frame and every scene node in a renderer instance will be tested against the camera's frustum. The models used in this demo were derived from the Google 3D warehouse models and ariel imagery/elevation data was downloaded from http://oregonexplorer.info/
 
 #Build instructions:
-Install SDL2, SDL2_image GLEW and CMake.
+Install SDL2, SDL2_image and CMake.
 
 Generate Makefile/IDE project for example:
 
@@ -28,5 +28,3 @@ sdlgl3-wavefront Licensed under 2 clause BSD.
 GLM library licensed under MIT
 
 SDL2 and SDL2_image library licensed under zlib
-
-GLEW licensed under modified BSD and MIT licenses

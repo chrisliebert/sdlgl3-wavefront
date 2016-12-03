@@ -6,7 +6,7 @@
 typedef struct
 {
     // Material name
-    char name[64];
+    char name[MAX_MATERIAL_NAME_STRING_LENGTH];
     float ambient[3];
     float diffuse[3];
     float specular[3];
@@ -18,15 +18,16 @@ typedef struct
     // illumination model (see http://www.fileformat.info/format/material/)
     int illum;
     //Texture file names
-    char ambientTexName[64];
-    char diffuseTexName[64];
-    char specularTexName[64];
-    char normalTexName[64];
+    char ambientTexName[MAX_MATERIAL_NAME_STRING_LENGTH];
+    char diffuseTexName[MAX_MATERIAL_NAME_STRING_LENGTH];
+    char specularTexName[MAX_MATERIAL_NAME_STRING_LENGTH];
+    char normalTexName[MAX_MATERIAL_NAME_STRING_LENGTH];
 } Material;
 
 typedef struct
 {
-	int width, height;
+	unsigned width, height;
+	unsigned bpp;
 	int mode;
 	unsigned char* data;
 } Texture;

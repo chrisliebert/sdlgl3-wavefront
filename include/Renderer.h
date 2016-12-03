@@ -17,6 +17,12 @@ void _checkForGLError(const char *file, int line);
 // glCheckError();
 #define checkForGLError() _checkForGLError(__FILE__,__LINE__)
 
+// GLAD_DEBUG is only defined if the c-debug generator was used
+#ifdef GLAD_DEBUG
+// logs every gl call to the console
+void pre_gl_call(const char *name, void *funcptr, int len_args, ...);
+#endif
+
 // Load configuration variables
 class ConfigLoader
 {
