@@ -1,1 +1,0 @@
-This is where binary cache files are stored.

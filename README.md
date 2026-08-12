@@ -1,30 +1,72 @@
 # sdlgl3-wavefront
 
-sdlgl3-wavefront is a starting point template for shader-based OpenGL 3.3 applications which can load multiple wavefront/.obj files and textures. The renderer will load a list of objects into a single vertex buffer and glDrawRangeElementsBaseVertex is used for rendering. Other versions of OpenGL could also be used as long as shaders, buffer objects and glDrawRangeElementsBaseVertex are available.
+sdlgl3-wavefront is a lightweight 3D renderer starter focused on Wavefront OBJ loading, scene culling, and shader-based rendering. The current codebase targets OpenGL 3.3+ and uses SDL3 plus SDL3_image via CMake.
 
-Frustum extraction and testing algorithms from http://www.crownandcutlass.com/features/technicaldetails/frustum.html have been incorporated into Frustum.cpp. After 3D model/models are loaded each disconnected mesh is put into a SceneNode structure and a bounding radius is calculated. The Renderer.renderer() is passed a camera object so the frustum matrix can be extracted every frame and every scene node in a renderer instance will be tested against the camera's frustum. The models used in this demo were derived from the Google 3D warehouse models and ariel imagery/elevation data was downloaded from http://oregonexplorer.info/
+## Project goals
 
-#Build instructions:
-Install SDL2, SDL2_image and CMake.
+- Keep the core runtime small and understandable.
+- Run well on older hardware (OpenGL 3.3 baseline).
+- Add optional fast paths for newer GPUs without breaking baseline compatibility.
+- Provide a top-down architecture path for production growth.
 
-Generate Makefile/IDE project for example:
+See the production playbook: [doc/Production_Playbook.md](doc/Production_Playbook.md)
 
-cmake -G"Unix Makefiles"
+## Build
 
-generates Makefile for Linux.
-Instructions for Windows can be found [here](doc/Windows_Dev_Setup.html)
+This project can auto-fetch SDL3 and SDL3_image when not installed locally.
 
-#Screenshots:
-![alt tag](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot1.jpg)
-![alt tag](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot2.jpg)
-![alt tag](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot3.jpg)
-![alt tag](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot4.jpg)
-![alt tag](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot5.jpg)
-![alt tag](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot6.jpg)
+### Recommended (CMake presets)
 
-#License:
-sdlgl3-wavefront Licensed under 2 clause BSD.
+Configure:
 
-GLM library licensed under MIT
+```bash
+cmake --preset ninja-debug
+```
 
-SDL2 and SDL2_image library licensed under zlib
+Build:
+
+```bash
+cmake --build --preset build-ninja-debug
+```
+
+Run:
+
+```bash
+./build/ninja-debug/sdlglapp
+```
+
+### Manual configure/build
+
+```bash
+cmake -S . -B build -DSDL3_FETCH_IF_MISSING=ON
+cmake --build build --config Debug
+```
+
+## Architecture direction
+
+The production direction is to preserve a simple top-down flow:
+
+1. Platform and app loop
+2. Scene update and visibility
+3. Frame graph and pass scheduling
+4. Render backend (OpenGL today, backend abstraction for SDL GPU API next)
+
+This keeps design lightweight while enabling modern hardware features where available.
+
+## Screenshots
+
+![screenshot 1](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot1.jpg)
+![screenshot 2](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot2.jpg)
+![screenshot 3](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot3.jpg)
+![screenshot 4](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot4.jpg)
+![screenshot 5](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot5.jpg)
+![screenshot 6](https://raw.githubusercontent.com/chrisliebert/sdlgl3-wavefront/master/sdlgl3-wavefront_screenshot6.jpg)
+
+## License
+
+sdlgl3-wavefront is licensed under the BSD 2-clause license.
+
+Dependencies keep their original licenses:
+
+- GLM: MIT
+- SDL3 and SDL3_image: zlib

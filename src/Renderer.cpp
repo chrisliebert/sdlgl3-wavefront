@@ -1,1162 +1,1442 @@
-#include "Common.h"
 #include "Renderer.h"
+#include "ConfigLoader.h"
+#include "OpenGLBackend.h"
+#include "PathUtil.h"
+#include "MathUtil.h"
 
-void _checkForGLError(const char *file, int line)
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
+#include <filesystem>
+#include <limits>
+#include <algorithm>
+#include <cctype>
+
+
+
+void checkForGLSLError(GLuint programId)
 {
-	GLenum err (glGetError());
-	static int numErrors = 0;
-	while(err!=GL_NO_ERROR)
-	{
-		std::string error;
-		numErrors++;
-		switch(err)
-		{
-		case GL_INVALID_OPERATION:
-			error="INVALID_OPERATION";
-			break;
-		case GL_INVALID_ENUM:
-			error="INVALID_ENUM";
-			break;
-		case GL_INVALID_VALUE:
-			error="INVALID_VALUE";
-			break;
-		case GL_OUT_OF_MEMORY:
-			error="OUT_OF_MEMORY";
-			break;
-		case GL_INVALID_FRAMEBUFFER_OPERATION:
-			error="INVALID_FRAMEBUFFER_OPERATION";
-			break;
-		}
-
-		std::cerr << "GL_" << error.c_str() <<" - "<< file << ":" << line << std::endl;
-
-		if(numErrors > 10)
-		{
-			exit(1);
-		}
-
-		err=glGetError();
-	}
+    GLint result = GL_FALSE;
+    glGetProgramiv(programId, GL_LINK_STATUS, &result);
+    if (result == GL_FALSE)
+    {
+        GLint logLength = 0;
+        glGetProgramiv(programId, GL_INFO_LOG_LENGTH, &logLength);
+        if (logLength > 1)
+        {
+            std::vector<GLchar> log(static_cast<std::size_t>(logLength), 0);
+            glGetProgramInfoLog(programId, static_cast<GLsizei>(log.size()), nullptr, log.data());
+            fprintf(stdout, "Shader link error: %s\n", log.data());
+        }
+    }
 }
 
-void checkForGLSLError(GLuint programId) {
-	GLint result;
-	glGetProgramiv(programId, GL_LINK_STATUS, &result);
-	if(result == GL_FALSE)
-	{
-		GLint length;
-		char *log;
-		// get the program info log
-		glGetProgramiv(programId, GL_INFO_LOG_LENGTH, &length);
-		log = new char[length];
-		glGetProgramInfoLog(programId, length, &result, log);
-		std::cout << "Unable to link shader: " << log << std::endl;
-		delete log;
-	}
-}
-
-// GLAD_DEBUG is only defined if the c-debug generator was used
 #ifdef GLAD_DEBUG
-// logs every gl call to the console
-void pre_gl_call(const char *name, void *funcptr, int len_args, ...) {
+void pre_gl_call(const char* name, void* funcptr, int len_args, ...)
+{
+    (void)name; (void)funcptr; (void)len_args;
     std::cout << "Calling: " << name << " (" << len_args << " arguments)" << std::endl;
 }
 #endif
 
-void parseLine(std::string& line, std::map<std::string, std::string>& vars)
-{
-	const char* l = line.c_str();
-	bool foundEquals = false;
-	std::string lhs, rhs;
-
-	// basic syntax check
-	if(l[0] == '=') {
-		std::cerr << "Invalid config line: " << line << std::endl;
-		return;
-	}
-
-	for(int i=0; i<line.length(); i++) {
-		char c = l[i];
-		if(c == '#') break;
-		if(c == '=') {
-			foundEquals = true;
-			continue;
-		}
-		if(c != ' ') {
-			if(!foundEquals) {
-				// save the lhs
-				lhs += c;
-			} else {
-				// save the rhs
-				rhs += c;
-			}
-		}
-	}
-
-	if(lhs.length() > 0) vars.insert(std::make_pair(lhs, rhs));
-}
-
-ConfigLoader::ConfigLoader(const char* _filename) {
-	filename = _filename;
-	std::string filePath(CONFIG_DIRECTORY);
-	filePath += DIRECTORY_SEPARATOR + std::string(filename);
-	std::ifstream fileStream(filePath.c_str());
-	if (fileStream.is_open())
-	{
-		std::cout << "loaded " << filePath << std::endl;
-		std::string line;
-		while (std::getline(fileStream, line))
-		{
-			int pos;
-			line.erase(std::remove(line.begin(), line.end(), '\r'), line.end());
-			parseLine(line, vars);
-		}
-		fileStream.close();
-	}
-	else
-	{
-		std::cerr << "Unable to load shader source" << std::endl;
-	}
-}
-
-ConfigLoader::~ConfigLoader() {
-}
-
-float ConfigLoader::getFloat(const char* var) {
-	std::string v(var);
-	return getFloat(v);
-}
-
-bool ConfigLoader::getBool(const char* var) {
-	std::string v(var);
-	return getBool(v);
-}
-
-bool ConfigLoader::getBool(std::string& var) {
-	std::map<std::string, std::string>::iterator i = vars.find(var);
-	if(i == vars.end()) {
-		std::cerr << "Unable to load " << var << " from " << filename << std::endl;
-		exit(5);
-	}
-	std::string s = i->second;
-
-	if(s.compare("true") == 0 || s.compare("True") == 0) {
-		return true;
-	} else if(s.compare("false") == 0 || s.compare("False") == 0) {
-		return false;
-	}
-
-	std::stringstream ss(s);
-	bool val;
-
-	while(ss >> val || !ss.eof()) {
-		if(ss.fail()) {
-			ss.clear();
-			std::cerr << "Unable to parse variable " << var << " of " << s << " as bool." << std::endl;
-			exit(6);
-		}
-	}
-
-	return val;
-}
-
-float ConfigLoader::getFloat(std::string& var) {
-	std::map<std::string, std::string>::iterator i = vars.find(var);
-	if(i == vars.end()) {
-		std::cerr << "Unable to load " << var << " from " << filename << std::endl;
-		exit(5);
-	}
-	std::string s = i->second;
-	std::stringstream ss(s);
-	float val;
-
-	while(ss >> val || !ss.eof()) {
-		if(ss.fail()) {
-			ss.clear();
-			std::cerr << "Unable to parse variable " << var << " of " << s << " as float." << std::endl;
-			exit(6);
-		}
-	}
-
-	return val;
-}
-
-int ConfigLoader::getInt(const char* var) {
-	std::string v(var);
-	return getInt(v);
-}
-
-int ConfigLoader::getInt(std::string& var) {
-	std::map<std::string, std::string>::iterator i = vars.find(var);
-	if(i == vars.end()) {
-		std::cerr << "Unable to load " << var << " from " << filename << std::endl;
-		exit(5);
-	}
-	std::string s = i->second;
-	std::stringstream ss(s);
-	int val;
-
-	while(ss >> val || !ss.eof()) {
-		if(ss.fail()) {
-			ss.clear();
-			std::cerr << "Unable to parse variable " << var << " of " << s << " as integer." << std::endl;
-			exit(6);
-		}
-	}
-
-	return val;
-}
-
-std::string& ConfigLoader::getVar(const char* var)
-{
-	std::string v(var);
-	return getVar(v);
-}
-
-std::string& ConfigLoader::getVar(std::string& var)
-{
-	std::map<std::string, std::string>::iterator i = vars.find(var);
-	if(i == vars.end()) {
-		std::cerr << "Unable to load " << var << " from " << filename << std::endl;
-		exit(5);
-	}
-	return i->second;
-}
-
-bool ConfigLoader::hasVar(const char* var)
-{
-	std::string s(var);
-	return hasVar(s);
-}
-
-bool ConfigLoader::hasVar(std::string& var) {
-	return vars.find(var) != vars.end();
-}
-
-std::ostream& operator<<(std::ostream& os, ConfigLoader& dt)
-{
-	os << "|------- " << dt.filename << " -------|" << std::endl;
-	std::map<std::string, std::string>::iterator it;
-	for (it=dt.vars.begin(); it!=dt.vars.end(); ++it) {
-		os << it->first << " <- " << it->second << '\n';
-	}
-	os << "|--------";
-	for(unsigned i=0; i<strlen(dt.filename); i++) {
-		os << "-";
-	}
-	os << "--------|" << std::endl;;
-	return os;
-}
-
-std::ostream& operator<<(std::ostream& os, ConfigLoader* dt)
-{
-	// dereference pointer and call function with reference
-	os << *dt;
-	return os;
-}
-
 Renderer::Renderer()
 {
-	startPosition = 0;
-	vao = vbo = ibo = 0;
-	gpuProgram = 0;
-	shadowProgram = 0;
-	depthMapFBO = 0;
-	shadowMap = 0;
-	configLoader = new ConfigLoader("renderer.cfg");
-	shadowsEnabled = configLoader->getBool("shadow.enabled");
-	shadowWidth = configLoader->getInt("shadow.width");
-	shadowHeight = configLoader->getInt("shadow.height");
-	binCacheWriterThread = 0;
+    configLoader = std::make_unique<ConfigLoader>("renderer.cfg");
+    
+    shadowsEnabled = configLoader->getBool("shadow.enabled");
+    binCacheWriterThread = nullptr;
+    profilerEnabled = configLoader->hasVar("renderer.profileHud") ? configLoader->getBool("renderer.profileHud") : false;
+    hierarchicalCullingEnabled = configLoader->hasVar("renderer.culling.hierarchical") ? configLoader->getBool("renderer.culling.hierarchical") : true;
+    occlusionCullingEnabled = configLoader->hasVar("renderer.culling.occlusion") ? configLoader->getBool("renderer.culling.occlusion") : true;
+    cullLeafSize = configLoader->hasVar("renderer.culling.leafSize") ? configLoader->getInt("renderer.culling.leafSize") : 16;
+    occlusionRetestFrames = configLoader->hasVar("renderer.culling.occlusionRetestFrames") ? configLoader->getInt("renderer.culling.occlusionRetestFrames") : 8;
+    occlusionMinSamples = configLoader->hasVar("renderer.culling.occlusionMinSamples") ? configLoader->getInt("renderer.culling.occlusionMinSamples") : 1;
 
-	int flags = IMG_INIT_JPG | IMG_INIT_PNG | IMG_INIT_TIF;
-	int initted = IMG_Init(flags);
-	if ((initted&flags) != flags)
-	{
-		std::cerr << IMG_GetError() << std::endl;
-	}
+#if SDL_MAJOR_VERSION < 3
+    int flags = IMG_INIT_JPG | IMG_INIT_PNG | IMG_INIT_TIF;
+    int initted = IMG_Init(flags);
+    if ((initted & flags) != flags)
+    {
+        std::cerr << "SDL_image init warning: " << SDL_GetError() << std::endl;
+    }
+#endif
 }
 
 Renderer::~Renderer()
 {
-	// Wait for cache writer thread to exit
-	int cacheWriterThreadStatus = 0;
-	SDL_WaitThread(binCacheWriterThread, &cacheWriterThreadStatus);
-	if(cacheWriterThreadStatus != 0) {
-		std::cerr << "Binary cache writer thread failed with status " << cacheWriterThreadStatus << std::endl;
-	}
+    // Wait for cache writer thread to exit (thread-safe cleanup)
+    if (binCacheWriterThread != nullptr)
+    {
+        int status = 0;
+        SDL_WaitThread(static_cast<SDL_Thread*>(binCacheWriterThread), &status);
+        binCacheWriterThread = nullptr;
+    }
 
-	if(sceneNodes.size() > 0)
-	{
-		for(int i=0; i<sceneNodes.size(); i++) {
-			glDeleteTextures(1, &sceneNodes[i].diffuseTextureId);
-		}
-		glDeleteBuffers(1, &vbo);
-		glDeleteBuffers(1, &ibo);
-		glDeleteVertexArrays(1, &vao);
-	}
+    // Delete OpenGL resources (thread-safe via renderer destructor)
+    if (!occlusionQueries.empty())
+    {
+        glDeleteQueries(static_cast<GLsizei>(occlusionQueries.size()), occlusionQueries.data());
+    }
 
-	/* causes error on non-cached scene.
-	for(std::map<std::string, Texture>::iterator it=textures.begin(); it!=textures.end(); ++it) {
-		if(it->second.data) delete[] &*it->second.data;
-	} */
+    if (shadowMap != 0)
+    {
+        glDeleteTextures(1, &shadowMap);
+        shadowMap = 0;
+    }
 
-	IMG_Quit();
-	if(shadowProgram != NULL) delete shadowProgram;
-	if(gpuProgram != NULL) delete gpuProgram;
-	delete configLoader;
+    if (backend)
+    {
+        backend->shutdown();
+    }
+
+#if SDL_MAJOR_VERSION < 3
+    IMG_Quit();
+#endif
 }
 
-void Renderer::addMaterial(Material* material)
+void Renderer::addMaterial(std::string_view name, const Material& material)
 {
-	materials[material->name] = *material;
+    std::lock_guard<std::mutex> lock(sceneDataMutex);
+    materials.emplace(std::string(name), material);
 }
 
-void Renderer::addSceneNode(SceneNode* sceneNode)
+void Renderer::addSceneNode(SceneNode node)
 {
-	if(!sceneNode)
-	{
-		std::cerr << "Unable to add null sceneNode" << std::endl;
-	}
-	else
-	{
-		sceneNodes.push_back(*sceneNode);
-	}
+    std::lock_guard<std::mutex> lock(sceneDataMutex);
+    sceneNodes.push_back(std::move(node));
 }
 
-// Used to check file extension
-bool hasEnding (std::string const &fullString, std::string const &ending)
+namespace {
+    int getTextureMode(SDL_Surface* image)
+    {
+        int bpp = 0;
+#if SDL_MAJOR_VERSION >= 3
+        bpp = static_cast<int>(SDL_BYTESPERPIXEL(image->format));
+#else
+        bpp = image->format->BytesPerPixel;
+#endif
+        return (bpp == 4) ? GL_RGBA : GL_RGB;
+    }
+
+    std::string toLowerAscii(std::string value)
+    {
+        for (char& c : value)
+        {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return value;
+    }
+
+    std::string normalizeTextureRef(std::string_view textureRef)
+    {
+        std::string normalized(textureRef);
+        if (normalized.empty()) return normalized;
+
+        std::replace(normalized.begin(), normalized.end(), '\\', '/');
+        while (normalized.rfind("./", 0) == 0)
+        {
+            normalized.erase(0, 2);
+        }
+
+        const std::string lower = toLowerAscii(normalized);
+        if (lower.rfind("textures/", 0) == 0)
+        {
+            normalized.erase(0, 9);
+        }
+
+        return normalized;
+    }
+
+    std::filesystem::path resolveExistingTexturePath(std::string_view textureRef)
+    {
+        const std::string normalized = normalizeTextureRef(textureRef);
+        if (normalized.empty()) return {};
+
+        const std::array<std::filesystem::path, 3> candidates = {
+            std::filesystem::path(normalized),
+            std::filesystem::path(std::filesystem::path(normalized).filename().string()),
+            std::filesystem::path(textureRef)
+        };
+
+        std::error_code ec;
+        for (const auto& candidate : candidates)
+        {
+            if (candidate.empty()) continue;
+
+            const std::filesystem::path secureTexturePath = resolveSecurePath(TEXTURE_DIRECTORY, candidate);
+            if (!secureTexturePath.empty() && std::filesystem::exists(secureTexturePath, ec) && !ec)
+            {
+                return secureTexturePath;
+            }
+
+            const std::filesystem::path secureModelPath = resolveSecurePath(MODEL_DIRECTORY, candidate);
+            if (!secureModelPath.empty() && std::filesystem::exists(secureModelPath, ec) && !ec)
+            {
+                return secureModelPath;
+            }
+        }
+
+        const std::filesystem::path basename = std::filesystem::path(normalized).filename();
+        if (basename.empty()) return {};
+
+        const std::string targetName = toLowerAscii(basename.string());
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(TEXTURE_DIRECTORY, std::filesystem::directory_options::skip_permission_denied, ec))
+        {
+            if (ec) break;
+            if (!entry.is_regular_file()) continue;
+
+            const std::string entryName = toLowerAscii(entry.path().filename().string());
+            if (entryName == targetName)
+            {
+                return entry.path();
+            }
+        }
+
+        return {};
+    }
+}
+
+std::shared_ptr<Texture> Renderer::textureFromSurface(std::unique_ptr<SDL_Surface, SdlSurfaceDeleter> image)
 {
-	if (fullString.length() >= ending.length())
-	{
-		return (0 == fullString.compare (fullString.length() - ending.length(), ending.length(), ending));
-	}
-	else
-	{
-		return false;
-	}
+    auto texture = std::make_shared<Texture>();
+    texture->mode = getTextureMode(image.get());
+    texture->width = static_cast<unsigned>(image->w);
+    texture->height = static_cast<unsigned>(image->h);
+#if SDL_MAJOR_VERSION >= 3
+    texture->bpp = static_cast<unsigned>(SDL_BYTESPERPIXEL(image->format));
+#else
+    texture->bpp = static_cast<unsigned>(image->format->BytesPerPixel);
+#endif
+    // Copy pixel data to owned buffer (prevents use-after-free)
+    const size_t dataSize = static_cast<size_t>(image->w) * image->h * texture->bpp;
+    if (dataSize > 0 && image->pixels)
+    {
+        texture->data = std::shared_ptr<unsigned char[]>(new unsigned char[dataSize], [](unsigned char* p) { delete[] p; });
+        std::memcpy(texture->data.get(), image->pixels, dataSize);
+    }
+    return texture;
 }
 
-int getTextureMode(SDL_Surface* image)
+void Renderer::addTexture(std::string_view textureFileName, GLuint* textureId, std::unique_ptr<SDL_Surface, SdlSurfaceDeleter> image)
 {
-	//todo: support BGR, BGRA images
-	int mode = GL_RGB;
-	if(image->format->BytesPerPixel == 4)
-	{
-		mode = GL_RGBA;
-		//todo: set alpha flag
-	}
-	return mode;
+    if (!textureId) return;
+    
+    if (!image)
+    {
+        std::string blankPath = std::string(TEXTURE_DIRECTORY) + DIRECTORY_SEPARATOR + "DEFAULT_BLANK_TEXTURE.png";
+        
+        auto it = textures.find(blankPath);
+        if (it == textures.end())
+        {
+            std::unique_ptr<SDL_Surface, SdlSurfaceDeleter> defaultImage(IMG_Load(blankPath.c_str()));
+            if (!defaultImage)
+            {
+                std::cerr << "Error loading default blank texture" << std::endl;
+                return;
+            }
+            auto blankTexture = textureFromSurface(std::move(defaultImage));
+            textures[blankPath] = blankTexture;
+        }
+    }
+    
+    if (image)
+    {
+        auto texture = textureFromSurface(std::move(image));
+        textures[std::string(textureFileName)] = texture;
+    }
+    
+    auto it = textures.find(std::string(textureFileName));
+    if (it == textures.end()) return;
+    
+    const Texture* tex = it->second.get();
+    if (!tex || !tex->isValid()) return;
+    
+    glGenTextures(1, textureId);
+    glBindTexture(GL_TEXTURE_2D, *textureId);
+    glTexImage2D(GL_TEXTURE_2D, 0, tex->mode, 
+                 static_cast<GLsizei>(tex->width), static_cast<GLsizei>(tex->height),
+                 0, tex->mode, GL_UNSIGNED_BYTE, tex->data.get());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 }
 
-Texture* textureFromSurface(SDL_Surface* image) {
-	Texture* texture = new Texture;
-	//TODO: delete this memory
-		/*
-		// This is still not working correctly (tga images still have wrong colors)
-		std::string tga(".tga");
-		if(hasEnding(fileNameStr, tga))
-		{
-			mode = GL_BGR;
-			if(image->format->BytesPerPixel == 4)
-			{
-				mode = GL_BGRA;
-			}
-		}
-		//todo: change to GL_BRG on .tga images
-		 * */
-
-		texture->mode = getTextureMode(image);
-		texture->width = image->w;
-		texture->height = image->h;
-		texture->data = (unsigned char*) image->pixels;
-
-		return texture;
-}
-
-void Renderer::addTexture(const char* textureFileName, GLuint* textureId, SDL_Surface* image) {
-	Texture* texture = 0;
-
-	// If texture not loaded and image is null, try to load the default blank texture
-	if(!image)
-	{
-		//std::cerr << "Unable to load texture: " << textureFileName << std::endl;
-
-		std::string bfileNameStr(TEXTURE_DIRECTORY);
-		bfileNameStr += DIRECTORY_SEPARATOR;
-		bfileNameStr += std::string("DEFAULT_BLANK_TEXTURE.png");
-
-		if(textures.find(bfileNameStr) == textures.end()) {
-			image = IMG_Load(bfileNameStr.c_str());
-			if(!image) {
-				std::cerr << "Error loading default blank texture DEFAULT_BLANK_TEXTURE.png" << std::endl;
-				return;
-			} else {
-				std::cerr << "DEFAULT_BLANK_TEXTURE.png" << std::endl;//
-				texture = textureFromSurface(image);
-				textures[textureFileName] = *texture;
-				textures[bfileNameStr] = *texture;
-			}
-		} else {
-			// don't re-load the blank texture if it is already loaded
-			texture = &textures[bfileNameStr];
-		}
-	} else {
-		// image != null
-		texture = textureFromSurface(image);
-		textures[textureFileName] = *texture;
-	}
-
-	addTexture(textureFileName, textureId, texture);
-}
-
-void Renderer::addTexture(const char* textureFileName, GLuint* textureId, Texture* texture)
+void Renderer::addTexture(std::string_view /*textureFileName*/, GLuint* textureId, const Texture* texture)
 {
-	glGenTextures(1, textureId);
-	glBindTexture(GL_TEXTURE_2D, *textureId);
-	glTexImage2D(GL_TEXTURE_2D, 0, texture->mode, texture->width, texture->height, 0, texture->mode, GL_UNSIGNED_BYTE, texture->data);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    if (!textureId || !texture || !texture->isValid()) return;
+    
+    glGenTextures(1, textureId);
+    glBindTexture(GL_TEXTURE_2D, *textureId);
+    glTexImage2D(GL_TEXTURE_2D, 0, texture->mode, 
+                 static_cast<GLsizei>(texture->width), static_cast<GLsizei>(texture->height),
+                 0, texture->mode, GL_UNSIGNED_BYTE, texture->data.get());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 }
 
-void Renderer::addTexture(const char* textureFileName, GLuint* textureId)
+void Renderer::addTexture(std::string_view textureFileName, GLuint* textureId)
 {
-	std::map<std::string, Texture>::iterator it = textures.find(std::string(textureFileName));
-	if(it == textures.end()) {
-		// if texture is not found in cache, load from file
-		std::string fileNameStr(TEXTURE_DIRECTORY);
-		std::string textureFileNameStr = std::string(textureFileName);
-		fileNameStr += DIRECTORY_SEPARATOR;
-		fileNameStr += textureFileName;
-		SDL_Surface* image = IMG_Load(fileNameStr.c_str());
-		addTexture(textureFileName, textureId, image);
-	} else {
-		addTexture(textureFileName, textureId, &it->second);
-	}
+    if (!textureId) return;
+    
+    auto it = textures.find(std::string(textureFileName));
+    if (it != textures.end())
+    {
+        addTexture(textureFileName, textureId, it->second.get());
+        return;
+    }
+    
+    std::filesystem::path securePath = resolveExistingTexturePath(textureFileName);
+    if (securePath.empty()) {
+        std::cerr << "Texture not found: " << textureFileName << std::endl;
+        return;
+    }
+    
+    std::unique_ptr<SDL_Surface, SdlSurfaceDeleter> image(IMG_Load(securePath.string().c_str()));
+    if (image)
+    {
+        addTexture(textureFileName, textureId, std::move(image));
+    }
+    else
+    {
+        std::cerr << "Failed to load texture image: " << securePath << " (" << SDL_GetError() << ")" << std::endl;
+    }
 }
 
-// Used for debugging, TODO: replace with << operator
-void printVertex(Vertex& v)
+void Renderer::setBackend(std::unique_ptr<IRenderBackend> newBackend)
 {
-	std::cerr << "v " << v.vertex[0] << ", " << v.vertex[1] << ", " << v.vertex[2]
-			<< '\t' << " n " << v.normal[0] << ", " << v.normal[1] << ", " << v.normal[2]
-			<< '\t' << " t " << v.textureCoordinate[0] << ", " << v.textureCoordinate[1] << std::endl;
+    backend = std::move(newBackend);
 }
 
-void Renderer::addWavefront(const char* fileName, glm::mat4 matrix)
+void Renderer::addWavefront(std::string_view fileName, const glm::mat4& matrix)
 {
-	std::vector<tinyobj::shape_t> shapes;
-	std::vector<tinyobj::material_t> materials;
-	std::string modelDirectory(MODEL_DIRECTORY);
-	modelDirectory += DIRECTORY_SEPARATOR;
-	std::string fileNameStr(modelDirectory);
-	fileNameStr += fileName;
-	std::string err;
-	bool noError = (tinyobj::LoadObj(shapes, materials, err, fileNameStr.c_str(), modelDirectory.c_str()), true, true);
-	if(!noError)
-	{
-		std::cerr << err << std::endl;
-		return;
-	}
+    GLuint startPosition = 0;
+    int skippedFaces = 0;
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materialsList;
+    
+    std::filesystem::path requestedPath(fileName);
+    requestedPath = requestedPath.lexically_normal();
+    auto reqIt = requestedPath.begin();
+    if (reqIt != requestedPath.end() && *reqIt == std::filesystem::path(MODEL_DIRECTORY))
+    {
+        ++reqIt;
+        std::filesystem::path stripped;
+        for (; reqIt != requestedPath.end(); ++reqIt)
+        {
+            stripped /= *reqIt;
+        }
+        requestedPath = stripped;
+    }
 
-	for(size_t i=0; i<materials.size(); i++)
-	{
-		Material m;
-		memcpy((void*)& m.ambient, (void*)& materials[i].ambient[0], sizeof(float)*3);
-		memcpy((void*)& m.diffuse, (void*)& materials[i].diffuse[0], sizeof(float)*3);
-		memcpy((void*)& m.emission, (void*)& materials[i].emission[0], sizeof(float)*3);
-		memcpy((void*)& m.specular, (void*)& materials[i].specular[0], sizeof(float)*3);
-		memcpy((void*)& m.transmittance, (void*) &materials[i].transmittance[0], sizeof(float)*3);
-		memcpy((void*)& m.illum, (void*)& materials[i].illum, sizeof(int));
-		memcpy((void*)& m.ior, (void*)& materials[i].ior, sizeof(float));
-		memcpy((void*)& m.shininess, (void*)& materials[i].shininess, sizeof(float));
-		memcpy((void*)& m.dissolve, (void*)& materials[i].dissolve, sizeof(float));
+    std::filesystem::path modelPath = resolveSecurePath(MODEL_DIRECTORY, requestedPath);
+    if (modelPath.empty() || !std::filesystem::exists(modelPath))
+    {
+        std::cerr << "Model file not found or path is insecure: " << fileName << std::endl;
+        return;
+    }
 
-		strncpy(m.name, materials[i].name.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
-		strncpy(m.ambientTexName, materials[i].ambient_texname.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
-		strncpy(m.diffuseTexName, materials[i].diffuse_texname.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
-		strncpy(m.normalTexName, materials[i].specular_highlight_texname.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
-		strncpy(m.specularTexName, materials[i].specular_texname.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
+    std::filesystem::path parentPath = modelPath.parent_path();
+    std::string modelDirectory = parentPath.empty() ? std::string(".") : parentPath.lexically_normal().string();
+    if (!modelDirectory.empty() && modelDirectory.back() != '\\' && modelDirectory.back() != '/')
+    {
+        modelDirectory += DIRECTORY_SEPARATOR;
+    }
+    std::string fileNameStr = modelPath.lexically_normal().string();
+    
+    tinyobj::ObjReaderConfig reader_config;
+    reader_config.mtl_search_path = modelDirectory;
+    reader_config.triangulate = true;
 
-		addMaterial(&m);
-	}
+    tinyobj::ObjReader reader;
+    if (!reader.ParseFromFile(fileNameStr, reader_config))
+    {
+        if (!reader.Error().empty())
+            std::cerr << "TinyObjReader: " << reader.Error() << std::endl;
+        return;
+    }
+    if (!reader.Warning().empty())
+        std::cout << "TinyObjReader warning: " << reader.Warning() << std::endl;
 
-	for (size_t i = 0; i < shapes.size(); i++)
-	{
-		std::vector<Vertex> mVertexData;
+    attrib = reader.GetAttrib();
+    shapes = reader.GetShapes();
+    materialsList = reader.GetMaterials();
 
-		unsigned int materialId, lastMaterialId = 0;
-		if(shapes[i].mesh.material_ids.size() > 0)
-		{
-			materialId = lastMaterialId = shapes[i].mesh.material_ids[0];
-		}
+    // Load materials with proper string handling
+    int materialCount = 0;
+    int mapKdReferenced = 0;
+    int diffuseResolved = 0;
+    int derivedBaseColorCount = 0;
+    int roughnessAsDiffuseCount = 0;
+    int heuristicMappedCount = 0;
+    int unresolvedDiffuseCount = 0;
+    std::vector<std::string> unresolvedExamples;
+    unresolvedExamples.reserve(8);
 
-		for(int j=0; j <shapes[i].mesh.indices.size(); j++)
-		{
-			if((j%3) == 0)
-			{
-				lastMaterialId = materialId;
-				materialId = shapes[i].mesh.material_ids[j/3];
+    for (size_t i = 0; i < materialsList.size(); ++i)
+    {
+        Material m{};
+        ++materialCount;
+        
+        // Copy color values (ambient, diffuse, specular, emission are float[3] in material_t)
+        if (materialsList[i].dummy == 0) { // Check if data is valid
+            std::memcpy(&m.ambient, &materialsList[i].ambient[0], sizeof(float) * 3);
+            std::memcpy(&m.diffuse, &materialsList[i].diffuse[0], sizeof(float) * 3);
+            std::memcpy(&m.emission, &materialsList[i].emission[0], sizeof(float) * 3);
+            std::memcpy(&m.specular, &materialsList[i].specular[0], sizeof(float) * 3);
+            std::memcpy(&m.transmittance, &materialsList[i].transmittance[0], sizeof(float) * 3);
+        }
+        
+        m.shininess = materialsList[i].shininess;
+        m.ior = materialsList[i].ior;
+        m.dissolve = materialsList[i].dissolve;
+        m.illum = materialsList[i].illum;
 
-				if(materialId != lastMaterialId)
-				{
-					//new node
-					SceneNode sceneNode;
-					strncpy(&sceneNode.name[0], shapes[i].name.c_str(), MAX_NODE_NAME_STRING_LENGTH);
-					strncpy(&sceneNode.material[0], materials[lastMaterialId].name.c_str(), MAX_NODE_NAME_STRING_LENGTH);
+        auto deriveBaseColorTexture = [](std::string_view sourceTexture) {
+            if (sourceTexture.empty()) return std::string();
 
-					sceneNode.vertexDataSize = mVertexData.size();
-					sceneNode.vertexData = new Vertex[sceneNode.vertexDataSize];
-					memcpy((void*) sceneNode.vertexData, (void*) mVertexData.data(), sizeof(Vertex) * sceneNode.vertexDataSize);
-					sceneNode.startPosition = startPosition;
-					startPosition += (GLuint) sceneNode.vertexDataSize;
-					sceneNode.endPosition = sceneNode.startPosition + (GLuint) sceneNode.vertexDataSize;
-					sceneNode.primativeMode = GL_TRIANGLES;
-					sceneNode.diffuseTextureId = 0;
-					sceneNode.modelViewMatrix = matrix;
-					addSceneNode(&sceneNode);
-					mVertexData.clear();
-				}
-			}
+            std::string candidate(sourceTexture);
+            const auto replaceAll = [](std::string& text, std::string_view from, std::string_view to) {
+                size_t pos = 0;
+                while ((pos = text.find(from, pos)) != std::string::npos)
+                {
+                    text.replace(pos, from.size(), to);
+                    pos += to.size();
+                }
+            };
 
-			Vertex v;
-			memcpy((void*)& v.vertex, (void*)& shapes[i].mesh.positions[ shapes[i].mesh.indices[j] * 3 ], sizeof(float) * 3);
+            replaceAll(candidate, "_Roughness", "_BaseColor");
+            replaceAll(candidate, "_roughness", "_BaseColor");
+            replaceAll(candidate, " Roughness", " BaseColor");
+            return candidate;
+        };
 
-			if((shapes[i].mesh.indices[j] * 3) >= shapes[i].mesh.normals.size())
-			{
-				// TODO: generate normals
-				std::cerr << "Unable to put normal in " << fileName << std::endl;
-				//return;
-			} else {
-				memcpy((void*)& v.normal, (void*)& shapes[i].mesh.normals[ (shapes[i].mesh.indices[j] * 3) ], sizeof(float) * 3);
-			}
+        auto deriveNormalTexture = [](std::string_view sourceTexture) {
+            if (sourceTexture.empty()) return std::string();
 
-			tinyobj::mesh_t* m = &shapes[i].mesh;
+            std::string candidate(sourceTexture);
+            const auto replaceAll = [](std::string& text, std::string_view from, std::string_view to) {
+                size_t pos = 0;
+                while ((pos = text.find(from, pos)) != std::string::npos)
+                {
+                    text.replace(pos, from.size(), to);
+                    pos += to.size();
+                }
+            };
 
-			if((shapes[i].mesh.indices[j] * 2) >= shapes[i].mesh.texcoords.size())
-			{
-				//std::cerr << "Unable to put texcoord in " << shapes[i].name << std::endl;
-				v.textureCoordinate[0] = 0.f;
-				v.textureCoordinate[1] = 0.f;
-			} else {
-				v.textureCoordinate[0] = m->texcoords[(int)m->indices[j]*2];
-				v.textureCoordinate[1] = 1 - m->texcoords[(int)m->indices[j]*2+1]; // Account for wavefront to opengl coordinate system conversion
-			}
+            replaceAll(candidate, "_Roughness", "_Normal");
+            replaceAll(candidate, "_roughness", "_Normal");
+            replaceAll(candidate, " Roughness", " Normal");
+            return candidate;
+        };
 
-			mVertexData.push_back(v);
-			if(j == shapes[i].mesh.indices.size() - 1)
-			{
-				SceneNode sceneNode;
-				strncpy(&sceneNode.name[0], shapes[i].name.c_str(), MAX_NODE_NAME_STRING_LENGTH);
-				strncpy(&sceneNode.material[0], materials[lastMaterialId].name.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
+        std::string diffuseTextureName = materialsList[i].diffuse_texname;
+        const bool hadMapKd = !diffuseTextureName.empty();
+        if (hadMapKd) ++mapKdReferenced;
 
-				sceneNode.vertexDataSize = mVertexData.size();
-				sceneNode.vertexData = new Vertex[sceneNode.vertexDataSize];
-				memcpy((void*) sceneNode.vertexData, (void*) mVertexData.data(), sizeof(Vertex) * sceneNode.vertexDataSize);
-				sceneNode.startPosition = startPosition;
-				sceneNode.endPosition = sceneNode.startPosition + (GLuint) sceneNode.vertexDataSize;
-				startPosition += (GLuint) sceneNode.vertexDataSize;
-				sceneNode.primativeMode = GL_TRIANGLES;
-				sceneNode.diffuseTextureId = 0;
-				sceneNode.modelViewMatrix = matrix;
-				addSceneNode(&sceneNode);
-			}
-		}
-	}
+        if (resolveExistingTexturePath(diffuseTextureName).empty())
+        {
+            diffuseTextureName.clear();
+
+            const std::array<std::string, 2> roughnessLikeSources = {
+                materialsList[i].roughness_texname,
+                materialsList[i].specular_highlight_texname
+            };
+
+            for (const std::string& src : roughnessLikeSources)
+            {
+                if (src.empty()) continue;
+
+                const std::string derivedBaseColor = deriveBaseColorTexture(src);
+                if (!derivedBaseColor.empty() && !resolveExistingTexturePath(derivedBaseColor).empty())
+                {
+                    diffuseTextureName = derivedBaseColor;
+                    ++derivedBaseColorCount;
+                    break;
+                }
+
+                // Last-resort fallback: use the referenced texture directly as diffuse.
+                if (!resolveExistingTexturePath(src).empty())
+                {
+                    diffuseTextureName = src;
+                    ++roughnessAsDiffuseCount;
+                    break;
+                }
+            }
+        }
+
+        std::string normalTextureName = materialsList[i].normal_texname;
+        if (normalTextureName.empty())
+        {
+            normalTextureName = materialsList[i].bump_texname;
+        }
+        if (normalTextureName.empty())
+        {
+            const std::array<std::string, 2> roughnessLikeSources = {
+                materialsList[i].roughness_texname,
+                materialsList[i].specular_highlight_texname
+            };
+            for (const std::string& src : roughnessLikeSources)
+            {
+                if (src.empty()) continue;
+                const std::string derivedNormal = deriveNormalTexture(src);
+                if (!derivedNormal.empty() && !resolveExistingTexturePath(derivedNormal).empty())
+                {
+                    normalTextureName = derivedNormal;
+                    break;
+                }
+            }
+        }
+
+        std::string specularTextureName = materialsList[i].specular_texname;
+        if (specularTextureName.empty() && !materialsList[i].specular_highlight_texname.empty())
+        {
+            const std::string lower = toLowerAscii(materialsList[i].specular_highlight_texname);
+            if (lower.find("roughness") == std::string::npos)
+            {
+                specularTextureName = materialsList[i].specular_highlight_texname;
+            }
+        }
+
+        if (diffuseTextureName.empty())
+        {
+            const std::string materialNameLower = toLowerAscii(materialsList[i].name);
+
+            auto tryAssignHeuristic = [&](std::string_view diffuseCandidate, std::string_view normalCandidate, std::string_view specularCandidate) {
+                bool assigned = false;
+                if (diffuseTextureName.empty() && !resolveExistingTexturePath(diffuseCandidate).empty())
+                {
+                    diffuseTextureName = std::string(diffuseCandidate);
+                    assigned = true;
+                }
+                if (normalTextureName.empty() && !resolveExistingTexturePath(normalCandidate).empty())
+                {
+                    normalTextureName = std::string(normalCandidate);
+                }
+                if (specularTextureName.empty() && !resolveExistingTexturePath(specularCandidate).empty())
+                {
+                    specularTextureName = std::string(specularCandidate);
+                }
+                return assigned;
+            };
+
+            bool heuristicAssigned = false;
+            if (materialNameLower.find("chair_wood") != std::string::npos || materialNameLower.find("woodsurface") != std::string::npos)
+            {
+                heuristicAssigned = tryAssignHeuristic(
+                    "cloth_ball/cracked_wood_plank_diffuse_xtm.jpg",
+                    "cloth_ball/cracked_wood_plank_normal_xtm.jpg",
+                    "cloth_ball/cracked_wood_plank_specular_xtm.jpg");
+            }
+            else if (materialNameLower.find("chair_thickness") != std::string::npos || materialNameLower.find("towel") != std::string::npos)
+            {
+                heuristicAssigned = tryAssignHeuristic(
+                    "cloth_ball/Striped_cotton_01_diffuse_xtm.png",
+                    "cloth_ball/Striped_cotton_01_normal_xtm.png",
+                    "");
+            }
+            else if (materialNameLower.find("water") != std::string::npos)
+            {
+                heuristicAssigned = tryAssignHeuristic(
+                    "water/top.jpg",
+                    "",
+                    "");
+            }
+            else if (materialNameLower == "white")
+            {
+                heuristicAssigned = tryAssignHeuristic(
+                    "bar/bar_Paint White_BaseColor.png",
+                    "bar/bar_Paint White_Normal.png",
+                    "");
+            }
+
+            if (heuristicAssigned)
+            {
+                ++heuristicMappedCount;
+                std::cout << "Texture debug heuristic material map: " << materialsList[i].name
+                          << " -> " << diffuseTextureName << std::endl;
+            }
+        }
+
+        if (!diffuseTextureName.empty())
+        {
+            ++diffuseResolved;
+        }
+        else
+        {
+            ++unresolvedDiffuseCount;
+            if (unresolvedExamples.size() < 8)
+            {
+                std::ostringstream msg;
+                msg << materialsList[i].name << " (map_Kd='" << materialsList[i].diffuse_texname
+                    << "', map_Ns='" << materialsList[i].specular_highlight_texname
+                    << "', map_Pr='" << materialsList[i].roughness_texname << "')";
+                unresolvedExamples.push_back(msg.str());
+            }
+        }
+
+        m.setName(materialsList[i].name);
+        m.setDiffuseTexName(diffuseTextureName);
+        m.setNormalTexName(normalTextureName);
+        m.setSpecularTexName(specularTextureName);
+
+        addMaterial(materialsList[i].name, m);
+    }
+
+    std::cout << "Texture debug: materials=" << materialCount
+              << ", map_Kd refs=" << mapKdReferenced
+              << ", diffuse resolved=" << diffuseResolved
+              << ", derived BaseColor=" << derivedBaseColorCount
+              << ", roughness-as-diffuse=" << roughnessAsDiffuseCount
+              << ", heuristic mapped=" << heuristicMappedCount
+              << ", unresolved=" << unresolvedDiffuseCount
+              << std::endl;
+    for (const auto& example : unresolvedExamples)
+    {
+        std::cout << "Texture debug unresolved material: " << example << std::endl;
+    }
+
+    // Process shapes with thread-safe node addition
+    for (size_t i = 0; i < shapes.size(); ++i)
+    {
+        std::vector<Vertex> localVertices;
+        int currentMaterialId = -1;
+        size_t indexOffset = 0;
+
+        for (size_t f = 0; f < shapes[i].mesh.num_face_vertices.size(); ++f)
+        {
+            int faceMaterialId = -1;
+            if (f < shapes[i].mesh.material_ids.size())
+                faceMaterialId = shapes[i].mesh.material_ids[f];
+
+            if (faceMaterialId != currentMaterialId) {
+                if (!localVertices.empty()) {
+                    SceneNode sceneNode;
+                    sceneNode.setName(shapes[i].name);
+                    if (currentMaterialId >= 0 && static_cast<size_t>(currentMaterialId) < materialsList.size()) {
+                        sceneNode.setMaterial(materialsList[currentMaterialId].name);
+                    }
+                    sceneNode.vertexDataSize = localVertices.size();
+                    sceneNode.vertexData = std::make_unique<Vertex[]>(sceneNode.vertexDataSize);
+                    std::memcpy(sceneNode.vertexData.get(), localVertices.data(), sizeof(Vertex) * sceneNode.vertexDataSize);
+                    sceneNode.startPosition = startPosition;
+                    sceneNode.endPosition = startPosition + static_cast<GLuint>(sceneNode.vertexDataSize);
+                    sceneNode.primitiveMode = GL_TRIANGLES;
+                    sceneNode.diffuseTextureId = 0;
+                    sceneNode.modelViewMatrix = matrix;
+                    addSceneNode(std::move(sceneNode));
+                    startPosition += static_cast<GLuint>(sceneNode.vertexDataSize);
+                    localVertices.clear();
+                }
+                currentMaterialId = faceMaterialId;
+            }
+
+            size_t fv = shapes[i].mesh.num_face_vertices[f];
+            bool faceValid = true;
+            std::vector<Vertex> faceVertices;
+            faceVertices.reserve(fv);
+
+            for (size_t v = 0; v < fv; ++v)
+            {
+                Vertex vert{};
+                tinyobj::index_t idx = shapes[i].mesh.indices[indexOffset + v];
+
+                if (idx.vertex_index < 0) {
+                    faceValid = false;
+                    break;
+                }
+
+                const size_t vertexBase = static_cast<size_t>(idx.vertex_index) * 3u;
+                if (vertexBase + 2u >= attrib.vertices.size()) {
+                    faceValid = false;
+                    break;
+                }
+
+                vert.vertex[0] = attrib.vertices[vertexBase + 0u];
+                vert.vertex[1] = attrib.vertices[vertexBase + 1u];
+                vert.vertex[2] = attrib.vertices[vertexBase + 2u];
+
+                if (idx.normal_index >= 0) {
+                    const size_t normalBase = static_cast<size_t>(idx.normal_index) * 3u;
+                    if (normalBase + 2u < attrib.normals.size()) {
+                        vert.normal[0] = attrib.normals[normalBase + 0u];
+                        vert.normal[1] = attrib.normals[normalBase + 1u];
+                        vert.normal[2] = attrib.normals[normalBase + 2u];
+                    }
+                }
+
+                if (idx.texcoord_index >= 0) {
+                    const size_t texBase = static_cast<size_t>(idx.texcoord_index) * 2u;
+                    if (texBase + 1u < attrib.texcoords.size()) {
+                        vert.textureCoordinate[0] = attrib.texcoords[texBase + 0u];
+                        vert.textureCoordinate[1] = 1.0f - attrib.texcoords[texBase + 1u];
+                    }
+                }
+                faceVertices.push_back(vert);
+            }
+
+            if (faceValid) {
+                localVertices.insert(localVertices.end(), faceVertices.begin(), faceVertices.end());
+            } else {
+                skippedFaces++;
+            }
+
+            indexOffset += fv;
+        }
+
+        if (!localVertices.empty())
+        {
+            SceneNode sceneNode;
+            sceneNode.setName(shapes[i].name);
+            if (currentMaterialId >= 0 && static_cast<size_t>(currentMaterialId) < materialsList.size()) {
+                sceneNode.setMaterial(materialsList[currentMaterialId].name);
+            }
+            sceneNode.vertexDataSize = localVertices.size();
+            sceneNode.vertexData = std::make_unique<Vertex[]>(sceneNode.vertexDataSize);
+            std::memcpy(sceneNode.vertexData.get(), localVertices.data(), sizeof(Vertex) * sceneNode.vertexDataSize);
+            sceneNode.startPosition = startPosition;
+            sceneNode.endPosition = startPosition + static_cast<GLuint>(sceneNode.vertexDataSize);
+            sceneNode.primitiveMode = GL_TRIANGLES;
+            sceneNode.diffuseTextureId = 0;
+            sceneNode.modelViewMatrix = matrix;
+            addSceneNode(std::move(sceneNode));
+            startPosition += static_cast<GLuint>(sceneNode.vertexDataSize);
+        }
+    }
+
+    if (skippedFaces > 0)
+    {
+        std::cerr << "Skipped " << skippedFaces << " invalid face(s) while loading " << fileName << std::endl;
+    }
 }
 
-/*	Binary cache file format:
- * 	[------numMaterials------]
- * 	[------numSceneNodes-----]
- * 	[------numTextures-------]
- * 	[------------------------]
- * 	[------material array----]
- * 	[----scene node array----]
- * 	[----vertex data array---]
- * 	[---texture data array---]
- */
-typedef struct BinCacheFileHeader {
-	size_t numMaterials;
-	size_t numSceneNodes;
-	size_t numVertices;
-	size_t numTextures;
-} BinCacheFileHeader;
+// ============================================================================
+// Binary Cache with Versioning (Fix #7.2)
+// ============================================================================
 
+struct BinCacheFileHeader {
+    uint32_t magic = 0x5741564F; // "OWAV" - Wavefront cache magic number
+    uint32_t version = BINARY_CACHE_VERSION;
+    size_t numMaterials;
+    size_t numSceneNodes;
+    size_t numVertices;
+    size_t numTextures;
+};
 
-// Thread callback to store geometry in a binary file
-static int CreateBinCache(void *rendererPtr)
+int Renderer::createBinCacheInternal()
 {
-	Renderer* renderer = (Renderer*)rendererPtr;
-	const char* filename = renderer->cacheFileName.c_str();
-	std::ofstream binFile (filename, std::ios::binary | std::ios::trunc);
-	if(!binFile.is_open()) {
-		std::cerr << "Unable to open " << filename << " for writing" << std::endl;
-		return -1;
-	}
+    std::lock_guard<std::mutex> lock(sceneDataMutex);
+    const char* filename = cacheFileName.c_str();
+    
+    std::ofstream binFile(filename, std::ios::binary | std::ios::trunc);
+    if (!binFile.is_open())
+    {
+        std::cerr << "Unable to open " << filename << " for writing" << std::endl;
+        return -1;
+    }
 
-	BinCacheFileHeader header;
-	header.numMaterials = renderer->materials.size();
-	header.numSceneNodes = renderer->sceneNodes.size();
-	header.numVertices = renderer->vertexData.size();
-	header.numTextures = renderer->textures.size();
-	binFile.write((char*)&header, sizeof(BinCacheFileHeader));
+    BinCacheFileHeader header{};
+    header.numMaterials = materials.size();
+    header.numSceneNodes = sceneNodes.size();
+    header.numVertices = vertexData.size();
+    header.numTextures = textures.size();
+    binFile.write(reinterpret_cast<const char*>(&header), sizeof(BinCacheFileHeader));
 
-	// Write material array
-	std::map<std::string, Material>::iterator it;
-	for(it=renderer->materials.begin(); it!=renderer->materials.end(); ++it) {
-		Material* m = &it->second;
-		binFile.write((char*)m, sizeof(Material));
-	}
+    // Write materials (field-by-field, no raw struct dump)
+    for (const auto& [name, mat] : materials)
+    {
+        binFile.write(mat.name, sizeof(mat.name));
+        binFile.write(reinterpret_cast<const char*>(mat.ambient), sizeof(mat.ambient));
+        binFile.write(reinterpret_cast<const char*>(mat.diffuse), sizeof(mat.diffuse));
+        binFile.write(reinterpret_cast<const char*>(mat.specular), sizeof(mat.specular));
+        binFile.write(reinterpret_cast<const char*>(mat.transmittance), sizeof(mat.transmittance));
+        binFile.write(reinterpret_cast<const char*>(mat.emission), sizeof(mat.emission));
+        binFile.write(reinterpret_cast<const char*>(&mat.shininess), sizeof(mat.shininess));
+        binFile.write(reinterpret_cast<const char*>(&mat.ior), sizeof(mat.ior));
+        binFile.write(reinterpret_cast<const char*>(&mat.dissolve), sizeof(mat.dissolve));
+        binFile.write(reinterpret_cast<const char*>(&mat.illum), sizeof(mat.illum));
+        binFile.write(mat.diffuseTexName, sizeof(mat.diffuseTexName));
+        binFile.write(mat.normalTexName, sizeof(mat.normalTexName));
+        binFile.write(mat.specularTexName, sizeof(mat.specularTexName));
+    }
 
-	// Write scene node array
-	std::vector<SceneNode>::iterator it2;
-	for(it2=renderer->sceneNodes.begin(); it2!=renderer->sceneNodes.end(); ++it2) {
-		SceneNode* sn = &*it2;
-		binFile.write((char*)sn, sizeof(SceneNode));
-	}
+    // Write scene nodes (field-by-field with vertex data)
+    for (const auto& node : sceneNodes)
+    {
+        binFile.write(node.name, sizeof(node.name));
+        binFile.write(node.material, sizeof(node.material));
+        const size_t serializedVertexDataSize = (node.vertexData && node.vertexDataSize > 0) ? node.vertexDataSize : 0;
+        binFile.write(reinterpret_cast<const char*>(&serializedVertexDataSize), sizeof(serializedVertexDataSize));
+        
+        if (serializedVertexDataSize > 0)
+        {
+            binFile.write(reinterpret_cast<const char*>(node.vertexData.get()), 
+                         sizeof(Vertex) * serializedVertexDataSize);
+        }
+        
+        binFile.write(reinterpret_cast<const char*>(&node.modelViewMatrix), sizeof(node.modelViewMatrix));
+        binFile.write(reinterpret_cast<const char*>(&node.startPosition), sizeof(node.startPosition));
+        binFile.write(reinterpret_cast<const char*>(&node.endPosition), sizeof(node.endPosition));
+        binFile.write(reinterpret_cast<const char*>(&node.primitiveMode), sizeof(node.primitiveMode));
+        binFile.write(reinterpret_cast<const char*>(&node.ambientTextureId), sizeof(node.ambientTextureId));
+        binFile.write(reinterpret_cast<const char*>(&node.diffuseTextureId), sizeof(node.diffuseTextureId));
+        binFile.write(reinterpret_cast<const char*>(&node.normalTextureId), sizeof(node.normalTextureId));
+        binFile.write(reinterpret_cast<const char*>(&node.specularTextureId), sizeof(node.specularTextureId));
+        binFile.write(reinterpret_cast<const char*>(&node.boundingSphere), sizeof(node.boundingSphere));
+        binFile.write(reinterpret_cast<const char*>(&node.lx), sizeof(node.lx));
+        binFile.write(reinterpret_cast<const char*>(&node.ly), sizeof(node.ly));
+        binFile.write(reinterpret_cast<const char*>(&node.lz), sizeof(node.lz));
+    }
 
-	// Write vertex array
-	Vertex* v = 0;
-	for(size_t i=0; i<renderer->vertexData.size(); i++) {
-		v = &renderer->vertexData[i];
-		binFile.write((char*)v, sizeof(Vertex));
-	}
+    // Write vertex data
+    for (const auto& v : vertexData)
+    {
+        binFile.write(reinterpret_cast<const char*>(&v), sizeof(Vertex));
+    }
 
-	// Write textures to array at end of file
-	std::map<std::string, Texture>::iterator it3;
-	char name[MAX_MATERIAL_NAME_STRING_LENGTH];
-	for(it3=renderer->textures.begin(); it3!=renderer->textures.end(); ++it3) {
-		Texture* texture = &it3->second;
-		strncpy(&name[0], it3->first.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
-		binFile.write(&name[0], sizeof(char) * MAX_MATERIAL_NAME_STRING_LENGTH);
-		binFile.write((char*) &texture->bpp, sizeof(unsigned));
-		binFile.write((char*) &texture->mode, sizeof(int));
-		binFile.write((char*) &texture->width, sizeof(unsigned));
-		binFile.write((char*) &texture->height, sizeof(unsigned));
-		size_t dataSize = (size_t) texture->width * texture->height * texture->bpp;
-		binFile.write((char*) &texture->data, dataSize);
-	}
+    // Write textures with proper data handling
+    for (const auto& [name, texture] : textures)
+    {
+        std::string nameStr = name;
+        if (nameStr.size() >= MAX_MATERIAL_NAME_STRING_LENGTH)
+            nameStr.resize(MAX_MATERIAL_NAME_STRING_LENGTH - 1);
+        
+        binFile.write(nameStr.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
+        binFile.write(reinterpret_cast<const char*>(&texture->bpp), sizeof(unsigned));
+        binFile.write(reinterpret_cast<const char*>(&texture->mode), sizeof(int));
+        binFile.write(reinterpret_cast<const char*>(&texture->width), sizeof(unsigned));
+        binFile.write(reinterpret_cast<const char*>(&texture->height), sizeof(unsigned));
+        
+        if (texture->data && texture->isValid())
+        {
+            size_t dataSize = static_cast<size_t>(texture->width) * texture->height * texture->bpp;
+            binFile.write(reinterpret_cast<const char*>(texture->data.get()), static_cast<std::streamsize>(dataSize));
+        }
+    }
 
-	binFile.close();
+    binFile.close();
+    
+    if (isVerboseEnabled())
+        std::cout << "saved cache to " << filename << std::endl;
 
-	if(renderer->configLoader->getBool("renderer.verbose"))
-		std::cout << "saved cache to " << filename << std::endl;
-
-	return 0;
+    return 0;
 }
 
-bool Renderer::checkScene() {
-
-	if(sceneNodes.size() == 0)
-	{
-		std::cout << "building empty scene" << std::endl;
-		return false;
-	}
-
-	if(configLoader->getBool("renderer.verbose")) {
-		std::cout << "num scene nodes: " << sceneNodes.size() << std::endl;
-		std::cout << "num vertices: " << vertexData.size() << std::endl;
-		std::cout << "num indices: " << indices.size() << std::endl;
-	}
-	return true;
+bool Renderer::checkScene() const
+{
+    if (sceneNodes.empty())
+    {
+        std::cout << "building empty scene" << std::endl;
+        return false;
+    }
+    return true;
 }
 
 bool Renderer::buildScene(Camera& camera)
 {
-	// populate vertexData and indices from sceneNodes
-	for(int i=0; i<sceneNodes.size(); i++)
-	{
-		for(int j=0; j<sceneNodes[i].vertexDataSize; j++)
-		{
-			Vertex v;
-			memcpy((void*) &v, (void*) &sceneNodes[i].vertexData[j], sizeof(Vertex));
-			vertexData.push_back(v);
-			indices.push_back((unsigned int) indices.size());
-		}
-	}
+    (void)camera;
+    
+    // Populate vertexData and indices from sceneNodes
+    for (auto& node : sceneNodes)
+    {
+        for (size_t j = 0; j < node.vertexDataSize; ++j)
+        {
+            vertexData.push_back(node.vertexData[j]);
+            indices.push_back(static_cast<GLuint>(indices.size()));
+        }
+    }
 
-	//Calculate Bounding Sphere radius
-	for(int i=0; i<sceneNodes.size(); i++)
-	{
-		// local origin/center of object (center of bounding sphere)
-		float lx = 0.f, ly = 0.f, lz = 0.f;
-		float r = 0.f;
+    // Calculate bounding sphere radius and local origin (single-pass optimization)
+    for (auto& node : sceneNodes)
+    {
+        if (node.vertexDataSize == 0)
+        {
+            node.lx = node.ly = node.lz = 0.0f;
+            node.boundingSphere = 0.1f;
+            continue;
+        }
 
-		int vertexDataSize = (int) sceneNodes[i].vertexDataSize;
-		//Calculate local origin
-		for(int j=0; j<vertexDataSize; j++)
-		{
-			lx += sceneNodes[i].vertexData[j].vertex[0];
-			ly += sceneNodes[i].vertexData[j].vertex[1];
-			lz += sceneNodes[i].vertexData[j].vertex[2];
-		}
-		lx /= (double)vertexDataSize;
-		ly /= (double)vertexDataSize;
-		lz /= (double)vertexDataSize;
-		sceneNodes[i].lx = lx;
-		sceneNodes[i].ly = ly;
-		sceneNodes[i].lz = lz;
+        Math::Sphere sphere = Math::calculateBoundingSphere(node.vertexData.get(), node.vertexDataSize);
+        node.lx = sphere.center.x;
+        node.ly = sphere.center.y;
+        node.lz = sphere.center.z;
+        node.boundingSphere = sphere.radius;
+        
+        if (node.boundingSphere == 0.0f)
+            node.boundingSphere = 0.1f;
+    }
 
-		for(int j=0; j<sceneNodes[i].vertexDataSize; j++)
-		{
-			float x = sceneNodes[i].vertexData[j].vertex[0];
-			float y = sceneNodes[i].vertexData[j].vertex[1];
-			float z = sceneNodes[i].vertexData[j].vertex[2];
+    // Free per-node vertex data (now in global vertexData)
+    for (auto& node : sceneNodes)
+    {
+        node.vertexData.reset();
+    }
 
-			double nx = x - lx;
-			double ny = y - ly;
-			double nz = z - lz;
-
-			float r2 = (float) sqrt(nx*nx + ny*ny + nz*nz);
-
-			if(r2 > r)
-			{
-				r = r2;
-			}
-			//std::cerr << "Boundingsphere for " << sceneNodes[i].name << " = " <<  r << std::endl;
-
-		}
-		if(r == 0)
-		{
-			//std::cerr << "Warning, bounding sphere radius = 0 for " << sceneNodes[i].name << std::endl;
-			r = 0.1f;
-		}
-		sceneNodes[i].boundingSphere = r;
-	}
-
-	// Free vertex data in sceneNodes
-	for(size_t i = 0; i<sceneNodes.size(); i++) {
-		delete[] sceneNodes[i].vertexData;
-	}
-
-	return checkScene();
+    return checkScene();
 }
 
-// Load a scene from a binary file cache
-bool Renderer::buildScene(Camera& camera, const char* filename)
+bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
 {
+    (void)camera;
 
-	if(configLoader->getBool("renderer.verbose"))
-		std::cout << "loading cached geometry" << std::endl;
+    const std::string filename(cacheFilename);
+    std::ifstream binFile(filename, std::ios::in | std::ios::binary);
+    if (!binFile.is_open())
+    {
+        return false;
+    }
 
-	std::ifstream binFile(filename, std::ios::in | std::ios::binary);
-	if(!binFile.is_open()) {
-		if(configLoader->getBool("renderer.verbose"))
-			std::cout << "Unable to open " << filename << " for reading" << std::endl;
+    const auto clearSceneData = [this]() {
+        materials.clear();
+        sceneNodes.clear();
+        vertexData.clear();
+        indices.clear();
+        textures.clear();
+    };
 
-		return false;
-	}
+    const auto failLoad = [&](const char* message) {
+        std::cerr << message << std::endl;
+        clearSceneData();
+        return false;
+    };
 
-	Material m;
-	SceneNode sn;
-	Vertex v;
-	BinCacheFileHeader header;
-	// Load header
-	binFile.read((char*)&header, sizeof(BinCacheFileHeader));
+    const auto readExact = [&](void* dst, size_t bytes) -> bool {
+        if (bytes == 0) return true;
+        binFile.read(reinterpret_cast<char*>(dst), static_cast<std::streamsize>(bytes));
+        return binFile.good();
+    };
 
-	// Load materials
-	for(size_t i=0; i<header.numMaterials; i++) {
-		binFile.read((char*)&m, sizeof(Material));
-		materials[m.name] = m;
-	}
+    const auto boundedStringLength = [](const char* s, size_t maxLen) {
+        size_t len = 0;
+        while (len < maxLen && s[len] != '\0')
+        {
+            ++len;
+        }
+        return len;
+    };
 
-	// Load scene nodes
-	for(size_t i=0; i<header.numSceneNodes; i++) {
-		binFile.read((char*)&sn, sizeof(SceneNode));
-		sn.diffuseTextureId = 0;
-		addSceneNode(&sn);
-	}
+    auto remainingBytes = [&]() -> uint64_t {
+        const std::streampos pos = binFile.tellg();
+        if (pos < 0) return 0;
+        binFile.seekg(0, std::ios::end);
+        const std::streampos endPos = binFile.tellg();
+        binFile.seekg(pos, std::ios::beg);
+        if (endPos < pos) return 0;
+        return static_cast<uint64_t>(endPos - pos);
+    };
 
-	// Load vertex data
-	for(size_t i=0; i<header.numVertices; i++) {
-		binFile.read((char*)&v, sizeof(Vertex));
-		vertexData.push_back(v);
-		indices.push_back((unsigned int) indices.size());
-	}
+    try
+    {
+        clearSceneData();
 
-	size_t numTexturesLoaded = 0;
-	// Load textures from the end of the file
-	char textureFileName[MAX_MATERIAL_NAME_STRING_LENGTH];
-	while(numTexturesLoaded < header.numTextures) {
-		textureFileName[0] = '\0';
-		Texture texture;
-		binFile.read((char*) &textureFileName[0], MAX_MATERIAL_NAME_STRING_LENGTH);
-		binFile.read((char*) &texture.bpp, sizeof(unsigned));
-		binFile.read((char*) &texture.mode, sizeof(int));
-		binFile.read((char*) &texture.width, sizeof(unsigned));
-		binFile.read((char*) &texture.height, sizeof(unsigned));
-		size_t imageSize = texture.width * texture.height * texture.bpp;
-		if(imageSize == 0) {
-			std::cerr << "Unable to load image size of 0: " << textureFileName << std::endl;
-			exit(9);
-		}
-		texture.data = new unsigned char[imageSize];
-		binFile.read((char*)texture.data, imageSize);
-		textures[std::string(&textureFileName[0])] = texture;
-		numTexturesLoaded++;
-	}
+        BinCacheFileHeader header{};
+        if (!readExact(&header, sizeof(BinCacheFileHeader)))
+        {
+            return failLoad("Unable to read cache header");
+        }
 
-	binFile.close();
-	if(configLoader->getBool("renderer.verbose")) std::cout << "loaded cached scene" << std::endl;
+        if (header.magic != 0x5741564F || header.version != BINARY_CACHE_VERSION)
+        {
+            std::cerr << "Incompatible cache format: expected v" << BINARY_CACHE_VERSION
+                      << ", got v" << header.version << std::endl;
+            return false;
+        }
 
-	return checkScene();
+        constexpr size_t kMaxMaterialCount = 100000;
+        constexpr size_t kMaxSceneNodeCount = 100000;
+        constexpr size_t kMaxVertexCount = 50000000;
+        constexpr size_t kMaxTextureCount = 100000;
+        constexpr size_t kMaxNodeVertexCount = 50000000;
+
+        if (header.numMaterials > kMaxMaterialCount ||
+            header.numSceneNodes > kMaxSceneNodeCount ||
+            header.numVertices > kMaxVertexCount ||
+            header.numTextures > kMaxTextureCount)
+        {
+            return failLoad("Cache header contains unreasonable counts");
+        }
+
+        for (size_t i = 0; i < header.numMaterials; ++i)
+        {
+            Material m{};
+            if (!readExact(m.name, sizeof(m.name)) ||
+                !readExact(m.ambient, sizeof(m.ambient)) ||
+                !readExact(m.diffuse, sizeof(m.diffuse)) ||
+                !readExact(m.specular, sizeof(m.specular)) ||
+                !readExact(m.transmittance, sizeof(m.transmittance)) ||
+                !readExact(m.emission, sizeof(m.emission)) ||
+                !readExact(&m.shininess, sizeof(m.shininess)) ||
+                !readExact(&m.ior, sizeof(m.ior)) ||
+                !readExact(&m.dissolve, sizeof(m.dissolve)) ||
+                !readExact(&m.illum, sizeof(m.illum)) ||
+                !readExact(m.diffuseTexName, sizeof(m.diffuseTexName)) ||
+                !readExact(m.normalTexName, sizeof(m.normalTexName)) ||
+                !readExact(m.specularTexName, sizeof(m.specularTexName)))
+            {
+                return failLoad("Cache file ended while reading materials");
+            }
+
+            m.name[sizeof(m.name) - 1] = '\0';
+            if (m.name[0] != '\0')
+            {
+                const size_t nameLen = boundedStringLength(m.name, sizeof(m.name));
+                materials.emplace(std::string(m.name, nameLen), m);
+            }
+        }
+
+        for (size_t i = 0; i < header.numSceneNodes; ++i)
+        {
+            SceneNode node{};
+            if (!readExact(node.name, sizeof(node.name)) ||
+                !readExact(node.material, sizeof(node.material)) ||
+                !readExact(&node.vertexDataSize, sizeof(node.vertexDataSize)))
+            {
+                return failLoad("Cache file ended while reading scene node header");
+            }
+
+            node.name[sizeof(node.name) - 1] = '\0';
+            node.material[sizeof(node.material) - 1] = '\0';
+
+            if (node.vertexDataSize > kMaxNodeVertexCount)
+            {
+                return failLoad("Cache node vertex count is too large");
+            }
+
+            const uint64_t vertexBytes = static_cast<uint64_t>(node.vertexDataSize) * static_cast<uint64_t>(sizeof(Vertex));
+            if (vertexBytes > remainingBytes())
+            {
+                return failLoad("Cache node vertex data is truncated");
+            }
+
+            if (node.vertexDataSize > 0)
+            {
+                node.vertexData = std::make_unique<Vertex[]>(node.vertexDataSize);
+                if (!readExact(node.vertexData.get(), static_cast<size_t>(vertexBytes)))
+                {
+                    return failLoad("Cache file ended while reading scene node vertices");
+                }
+            }
+
+            if (!readExact(&node.modelViewMatrix, sizeof(node.modelViewMatrix)) ||
+                !readExact(&node.startPosition, sizeof(node.startPosition)) ||
+                !readExact(&node.endPosition, sizeof(node.endPosition)) ||
+                !readExact(&node.primitiveMode, sizeof(node.primitiveMode)) ||
+                !readExact(&node.ambientTextureId, sizeof(node.ambientTextureId)) ||
+                !readExact(&node.diffuseTextureId, sizeof(node.diffuseTextureId)) ||
+                !readExact(&node.normalTextureId, sizeof(node.normalTextureId)) ||
+                !readExact(&node.specularTextureId, sizeof(node.specularTextureId)) ||
+                !readExact(&node.boundingSphere, sizeof(node.boundingSphere)) ||
+                !readExact(&node.lx, sizeof(node.lx)) ||
+                !readExact(&node.ly, sizeof(node.ly)) ||
+                !readExact(&node.lz, sizeof(node.lz)))
+            {
+                return failLoad("Cache file ended while reading scene node payload");
+            }
+
+            node.diffuseTextureId = 0;
+            sceneNodes.push_back(std::move(node));
+        }
+
+        vertexData.reserve(header.numVertices);
+        indices.reserve(header.numVertices);
+        for (size_t i = 0; i < header.numVertices; ++i)
+        {
+            Vertex v{};
+            if (!readExact(&v, sizeof(Vertex)))
+            {
+                return failLoad("Cache file ended while reading vertex data");
+            }
+            vertexData.push_back(v);
+            indices.push_back(static_cast<GLuint>(indices.size()));
+        }
+
+        size_t texturesLoaded = 0;
+        while (texturesLoaded < header.numTextures)
+        {
+            char nameBuf[MAX_MATERIAL_NAME_STRING_LENGTH]{};
+            unsigned texWidth = 0;
+            unsigned texHeight = 0;
+            unsigned texBpp = 0;
+            int texMode = 0;
+            if (!readExact(nameBuf, MAX_MATERIAL_NAME_STRING_LENGTH) ||
+                !readExact(&texBpp, sizeof(unsigned)) ||
+                !readExact(&texMode, sizeof(int)) ||
+                !readExact(&texWidth, sizeof(unsigned)) ||
+                !readExact(&texHeight, sizeof(unsigned)))
+            {
+                return failLoad("Cache file ended while reading texture header");
+            }
+
+            if (texWidth == 0 || texHeight == 0 || texBpp == 0 || texBpp > 16)
+            {
+                return failLoad("Cache texture header is invalid");
+            }
+
+            const uint64_t imageSize64 = static_cast<uint64_t>(texWidth) *
+                                         static_cast<uint64_t>(texHeight) *
+                                         static_cast<uint64_t>(texBpp);
+            if (imageSize64 == 0 || imageSize64 > remainingBytes() || imageSize64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
+            {
+                return failLoad("Cache texture data is truncated or invalid");
+            }
+
+            const size_t imageSize = static_cast<size_t>(imageSize64);
+            auto texture = std::make_shared<Texture>();
+            texture->width = texWidth;
+            texture->height = texHeight;
+            texture->bpp = texBpp;
+            texture->mode = texMode;
+            texture->data = std::shared_ptr<unsigned char[]>(new unsigned char[imageSize], [](unsigned char* p) { delete[] p; });
+            if (!readExact(texture->data.get(), imageSize))
+            {
+                return failLoad("Cache file ended while reading texture data");
+            }
+
+            nameBuf[sizeof(nameBuf) - 1] = '\0';
+            const size_t nameLen = boundedStringLength(nameBuf, sizeof(nameBuf));
+            const std::string nameStr(nameBuf, nameLen);
+            textures[nameStr] = texture;
+            ++texturesLoaded;
+        }
+    }
+    catch (const std::bad_alloc&)
+    {
+        return failLoad("Cache load failed: out of memory");
+    }
+    catch (const std::exception& ex)
+    {
+        std::cerr << "Cache load exception: " << ex.what() << std::endl;
+        clearSceneData();
+        return false;
+    }
+
+    return checkScene();
 }
 
 void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)
 {
-	if(configLoader->getBool("renderer.verbose")) std::cout << "Buffering to GPU" << std::endl;
-	// Load textures
-	checkForGLError();
-	for(int i=0; i <sceneNodes.size(); i++)
-	{
-		if(materials.find(sceneNodes[i].material) == materials.end()  )
-		{
-			std::cerr << "Material " << sceneNodes[i].material << " was not loaded" << std::endl;
-		}
-		else
-		{
-			if(strlen(materials[sceneNodes[i].material].diffuseTexName) > 0)
-				addTexture(materials[sceneNodes[i].material].diffuseTexName, &sceneNodes[i].diffuseTextureId);
-		}
-	}
+    backend->bufferToGpu(camera, cacheFileName, loadCachedScene);
 
-	if(configLoader->getBool("renderer.verbose")) std::cout << "buffered textures" << std::endl;
+    if (!loadCachedScene && configLoader->getBool("renderer.createBinObj"))
+    {
+        binCacheWriterThread = SDL_CreateThread(createBinCacheThread, "BinCacheWriterThread", this);
+    }
 
-	checkForGLError();
+    rebuildScenegraph();
 
-	//Allocate and assign a Vertex Array Object to our handle
-	glGenVertexArrays(1, &vao);
-	checkForGLError();
-	// Bind our Vertex Array Object as the current used object
-	glBindVertexArray(vao);
-	checkForGLError();
-
-	//Triangle Vertices
-	glGenBuffers(1, &vbo);
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(Vertex) * vertexData.size(), &vertexData[0], GL_STATIC_DRAW);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(Vertex),(void*)0);                       //send positions on pipe 0
-	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(Vertex),(void*)(sizeof(float)*3));       //send normals on pipe 1
-	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2,2,GL_FLOAT,GL_FALSE,sizeof(Vertex),(void*)(sizeof(float)*6));     //send texcoords on pipe 2
-
-	// Spawn thread to save scene to binary cache
-	if(!loadCachedScene && configLoader->getBool("renderer.createBinObj")) {
-		binCacheWriterThread = SDL_CreateThread(CreateBinCache, "BinCacheWriterThread", (void *)this);
-	}
-
-	checkForGLError();
-
-	glGenBuffers(1, &ibo);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLuint) * indices.size(), &indices[0], GL_STATIC_DRAW);
-	checkForGLError();
-
-	if(configLoader->getBool("renderer.verbose")) std::cout << "buffered geometry" << std::endl;
-
-	glEnable(GL_DEPTH_TEST);
-
-	checkForGLError();
-	gpuProgram = new GpuProgram();
-	shadowProgram = new GpuProgram();
-	checkForGLError();
-
-	std::string shadowVertShaderPath(SHADER_DIRECTORY);
-	std::string shadowFragShaderPath(SHADER_DIRECTORY);
-	shadowVertShaderPath += DIRECTORY_SEPARATOR + configLoader->getVar("shader.depth.vert");
-	shadowFragShaderPath += DIRECTORY_SEPARATOR + configLoader->getVar("shader.depth.frag");
-	VertexShader shadowVertShader(shadowVertShaderPath);
-	FragmentShader shadowFragShader(shadowFragShaderPath);
-
-	shadowProgram->attachShader(shadowVertShader);
-	shadowProgram->attachShader(shadowFragShader);
-	checkForGLError();
-	glLinkProgram(shadowProgram->getId());
-
-	std::string vertShaderPath(SHADER_DIRECTORY);
-	std::string fragShaderPath(SHADER_DIRECTORY);
-	vertShaderPath += DIRECTORY_SEPARATOR + configLoader->getVar("shader.vert");
-	fragShaderPath += DIRECTORY_SEPARATOR + configLoader->getVar("shader.frag");
-	VertexShader vertShader(vertShaderPath);
-	FragmentShader fragShader(fragShaderPath);
-
-	gpuProgram->attachShader(vertShader);
-	gpuProgram->attachShader(fragShader);
-
-	glLinkProgram(gpuProgram->getId());
-
-	// Check for link errors
-	checkForGLError();
-	checkForGLSLError(gpuProgram->getId());
-	checkForGLSLError(shadowProgram->getId());
-	checkForGLError();
-
-	glBindVertexArray(0);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	checkForGLError();
-
-	glGenFramebuffers(1, &depthMapFBO);
-
-	// Set uniforms
-	GLuint programId = gpuProgram->getId();
-	GLuint depthProgramId = shadowProgram->getId();
-	glm::mat4 lightProjection, lightView;
-	glm::mat4 lightSpaceMatrix;
-	glm::mat4 model;
-
-	// light positioned above and in front of camera
-	glm::vec3 lightPos = camera.position + glm::vec3(0.0, 100.0, 0.0);
-	lightProjection = glm::ortho(
-			configLoader->getFloat("shadow.ortho.left"),
-			configLoader->getFloat("shadow.ortho.right"),
-			configLoader->getFloat("shadow.ortho.bottom"),
-			configLoader->getFloat("shadow.ortho.top"),
-			configLoader->getFloat("shadow.ortho.near"),
-			configLoader->getFloat("shadow.ortho.far")
-	);
-	//lightProjection = glm::perspective(60.0f,
-	//		(GLfloat) shadowWidth / (GLfloat) shadowHeight, near_plane,
-	//		far_plane); // Note that if you use a perspective projection matrix you'll have to change the light position as the current light position isn't enough to reflect the whole scene.
-	lightView = glm::lookAt(lightPos, glm::vec3(0.0f),
-			glm::vec3(0.0, 1.0, 0.0));
-	lightSpaceMatrix = lightProjection * lightView;
-
-	// Set shadow program uniforms: uniform mat4 lightSpaceMatrix; uniform mat4 model;
-	shadowProgram->uniformLoader->addUniform("lightSpaceMatrix",
-			new UniformMat4(lightSpaceMatrix));
-
-	shadowProgram->uniformLoader->addUniform("model", new UniformMat4(model));
-
-	// Set rendering shader uniforms: uniform mat4 projection; uniform mat4 view; uniform mat4 model; uniform mat4 lightSpaceMatrix;
-
-	gpuProgram->uniformLoader->addUniform("projection",	new UniformMat4(camera.projectionMatrix));
-	gpuProgram->uniformLoader->addUniform("view", new UniformMat4(camera.modelViewMatrix));
-	gpuProgram->uniformLoader->addUniform("model", new UniformMat4(model));
-
-	gpuProgram->uniformLoader->addUniform("lightSpaceMatrix",
-			new UniformMat4(lightSpaceMatrix));
-
-	gpuProgram->uniformLoader->addUniform("lightPos",
-			new UniformVec3(lightPos));
-
-	gpuProgram->uniformLoader->addUniform("viewPos",
-			new UniformVec3(camera.position));
-
-	//uniform sampler2D diffuseTexture; 	uniform sampler2D shadowMap;
-
-	gpuProgram->uniformLoader->addUniform("diffuseTexture", new UniformInt(0));
-	gpuProgram->uniformLoader->addUniform("shadowMap", new UniformInt(1));
-	gpuProgram->uniformLoader->addUniform("shadows", new UniformInt(shadowsEnabled ? 1 : 0));
+    if (occlusionCullingEnabled)
+    {
+        occlusionQueries.resize(sceneNodes.size(), 0);
+        glGenQueries(static_cast<GLsizei>(occlusionQueries.size()), occlusionQueries.data());
+        occlusionVisible.assign(sceneNodes.size(), 1);
+        occlusionSkipCounters.assign(sceneNodes.size(), 0);
+    }
 }
 
-void Renderer::enableShadows()
+int Renderer::buildCullNode(std::vector<int>& sortedIndices, int start, int end)
 {
-	UniformInt* u = (UniformInt*) gpuProgram->uniformLoader->get("shadows");
-	u->set(1);
-	shadowsEnabled = 1;
+    CullNode node{};
+    node.leftChild = static_cast<std::size_t>(-1);
+    node.rightChild = static_cast<std::size_t>(-1);
+    node.firstLeaf = static_cast<std::size_t>(-1);
+    node.leafCount = end - start;
+
+    float minX = std::numeric_limits<float>::max();
+    float minY = std::numeric_limits<float>::max();
+    float minZ = std::numeric_limits<float>::max();
+    float maxX = -std::numeric_limits<float>::max();
+    float maxY = -std::numeric_limits<float>::max();
+    float maxZ = -std::numeric_limits<float>::max();
+
+    float sumX = 0.0f, sumY = 0.0f, sumZ = 0.0f;
+    for (int i = start; i < end; ++i)
+    {
+        const SceneNode& sn = sceneNodes[sortedIndices[i]];
+        sumX += sn.lx; sumY += sn.ly; sumZ += sn.lz;
+        if (sn.lx < minX) minX = sn.lx;
+        if (sn.ly < minY) minY = sn.ly;
+        if (sn.lz < minZ) minZ = sn.lz;
+        if (sn.lx > maxX) maxX = sn.lx;
+        if (sn.ly > maxY) maxY = sn.ly;
+        if (sn.lz > maxZ) maxZ = sn.lz;
+    }
+
+    const float invCount = 1.0f / static_cast<float>(end - start);
+    node.cx = sumX * invCount;
+    node.cy = sumY * invCount;
+    node.cz = sumZ * invCount;
+    node.radius = 0.0f;
+
+    for (int i = start; i < end; ++i)
+    {
+        const SceneNode& sn = sceneNodes[sortedIndices[i]];
+        const float dx = sn.lx - node.cx;
+        const float dy = sn.ly - node.cy;
+        const float dz = sn.lz - node.cz;
+        const float dist = static_cast<float>(std::sqrt(static_cast<double>(dx*dx + dy*dy + dz*dz))) + sn.boundingSphere;
+        if (dist > node.radius) node.radius = dist;
+    }
+
+    int nodeIndex = static_cast<int>(cullNodes.size());
+    cullNodes.push_back(node);
+
+    if ((end - start) <= cullLeafSize)
+    {
+        cullNodes[nodeIndex].firstLeaf = static_cast<std::size_t>(cullLeafNodeIndices.size());
+        cullNodes[nodeIndex].leafCount = end - start;
+        for (int i = start; i < end; ++i)
+            cullLeafNodeIndices.push_back(sortedIndices[i]);
+        return nodeIndex;
+    }
+
+    float extentX = maxX - minX, extentY = maxY - minY, extentZ = maxZ - minZ;
+    int splitAxis = 0;
+    if (extentY > extentX && extentY > extentZ) splitAxis = 1;
+    else if (extentZ > extentX && extentZ > extentY) splitAxis = 2;
+
+    std::sort(sortedIndices.begin() + start, sortedIndices.begin() + end,
+        [splitAxis, this](int a, int b) {
+            const auto& getVal = [this](const SceneNode& n, int axis) {
+                if (axis == 0) return n.lx;
+                if (axis == 1) return n.ly;
+                return n.lz;
+            };
+            return getVal(sceneNodes[a], splitAxis) < getVal(sceneNodes[b], splitAxis);
+        });
+
+    const int mid = start + ((end - start) / 2);
+    cullNodes[nodeIndex].leftChild = static_cast<std::size_t>(buildCullNode(sortedIndices, start, mid));
+    cullNodes[nodeIndex].rightChild = static_cast<std::size_t>(buildCullNode(sortedIndices, mid, end));
+    return nodeIndex;
 }
 
-void Renderer::disableShadows()
+void Renderer::rebuildScenegraph()
 {
-	UniformInt* u = (UniformInt*) gpuProgram->uniformLoader->get("shadows");
-	u->set(0);
-	shadowsEnabled = 0;
+    cullNodes.clear();
+    cullLeafNodeIndices.clear();
+    if (sceneNodes.empty() || !hierarchicalCullingEnabled) return;
+
+    std::vector<int> nodeIndices;
+    nodeIndices.reserve(static_cast<size_t>(sceneNodes.size()));
+    for (size_t i = 0; i < sceneNodes.size(); ++i)
+        nodeIndices.push_back(static_cast<int>(i));
+    
+    buildCullNode(nodeIndices, 0, static_cast<int>(nodeIndices.size()));
 }
+
+void Renderer::collectVisibleNodes(std::vector<int>& outVisible)
+{
+    outVisible.clear();
+    if (sceneNodes.empty()) return;
+
+    if (cullNodes.empty())
+    {
+        outVisible.reserve(sceneNodes.size());
+        for (size_t i = 0; i < sceneNodes.size(); ++i)
+        {
+            const auto& sn = sceneNodes[i];
+            if (frustum.spherePartiallyInFrustum(sn.lx, sn.ly, sn.lz, sn.boundingSphere) > 0)
+                outVisible.push_back(static_cast<int>(i));
+        }
+        return;
+    }
+
+    std::vector<int> stack;
+    stack.reserve(cullNodes.size());
+    stack.push_back(0);
+    
+    while (!stack.empty())
+    {
+        int nodeIndex = stack.back();
+        stack.pop_back();
+        const auto& node = cullNodes[static_cast<size_t>(nodeIndex)];
+        
+        if (frustum.spherePartiallyInFrustum(node.cx, node.cy, node.cz, node.radius) == 0)
+            continue;
+
+        if (node.leftChild == static_cast<std::size_t>(-1) && node.rightChild == static_cast<std::size_t>(-1))
+        {
+            for (int i = 0; i < node.leafCount; ++i)
+            {
+                const int sceneIdx = cullLeafNodeIndices[node.firstLeaf + static_cast<size_t>(i)];
+                const auto& sn = sceneNodes[static_cast<size_t>(sceneIdx)];
+                if (frustum.spherePartiallyInFrustum(sn.lx, sn.ly, sn.lz, sn.boundingSphere) > 0)
+                    outVisible.push_back(sceneIdx);
+            }
+        }
+        else
+        {
+            if (node.leftChild != static_cast<std::size_t>(-1)) stack.push_back(static_cast<int>(node.leftChild));
+            if (node.rightChild != static_cast<std::size_t>(-1)) stack.push_back(static_cast<int>(node.rightChild));
+        }
+    }
+}
+
+void Renderer::updateOcclusionQueryResults()
+{
+    if (!occlusionCullingEnabled || occlusionQueries.empty()) return;
+
+    for (size_t i = 0; i < occlusionQueries.size(); ++i)
+    {
+        GLuint query = occlusionQueries[i];
+        if (query == 0) continue;
+        
+        GLuint available = 0;
+        glGetQueryObjectuiv(query, GL_QUERY_RESULT_AVAILABLE, &available);
+        if (available)
+        {
+            GLuint samples = 0;
+            glGetQueryObjectuiv(query, GL_QUERY_RESULT, &samples);
+            occlusionVisible[i] = (samples >= static_cast<GLuint>(occlusionMinSamples)) ? 1 : 0;
+        }
+    }
+}
+
+void Renderer::enableShadows() { shadowsEnabled = true; }
+void Renderer::disableShadows() { shadowsEnabled = false; }
 
 GLuint Renderer::createShadowMap(Camera& camera)
 {
-	// See https://github.com/JoeyDeVries/LearnOpenGL/blob/master/src/5.advanced_lighting/3.1.shadow_mapping/shadow_mapping.cpp:120
-	// - Create depth texture
-	GLuint depthMap;
-	glGenTextures(1, &depthMap);
-	glBindTexture(GL_TEXTURE_2D, depthMap);
-
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, shadowWidth, shadowHeight, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-	GLfloat borderColor[] = { 1.0, 1.0, 1.0, 1.0 };
-	glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
-
-	glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
-	glDrawBuffer(GL_NONE);
-	glReadBuffer(GL_NONE);
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-	// Backup the viewport
-	GLint viewport[4];
-	glGetIntegerv(GL_VIEWPORT, viewport);
-	glViewport(0, 0, shadowWidth, shadowHeight);
-	glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-	glClear(GL_DEPTH_BUFFER_BIT);
-
-	if(sceneNodes.size() == 0)
-	{
-		std::cout << "empty scene" << std::endl;
-		exit(-1);
-	}
-
-#if _DEBUG
-	checkForGLError();
-#endif
-
-	glBindVertexArray(vao);
-	glEnableVertexAttribArray(0);
-	glEnableVertexAttribArray(1);
-	glEnableVertexAttribArray(2);
-
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-
-	shadowProgram->use();
-	shadowProgram->uniformLoader->load();
-
-
-	for(int i=0; i<sceneNodes.size(); i++)
-	{
-		glDrawRangeElementsBaseVertex(sceneNodes[i].primativeMode, sceneNodes[i].startPosition, sceneNodes[i].endPosition,
-				(sceneNodes[i].endPosition - sceneNodes[i].startPosition), GL_UNSIGNED_INT, (void*)(0), sceneNodes[i].startPosition);
-
-	}
-
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	glDisableVertexAttribArray(0);
-	glDisableVertexAttribArray(1);
-	glDisableVertexAttribArray(2);
-	glBindVertexArray(0);
-
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-	// Restore viewport
-	glViewport(0, 0, viewport[2], viewport[3]);
-	glBindTexture(GL_TEXTURE_2D, depthMap);
-
-#if _DEBUG
-	checkForGLError();
-#endif
-
-	return depthMap;
+    if (shadowMap == 0)
+    {
+        shadowMap = backend->createShadowMap(camera);
+        backend->getShadowMapSize(shadowWidth, shadowHeight);
+    }
+    return shadowMap;
 }
 
-void Renderer::render(Camera* camera)
+void Renderer::render(Camera& camera, const FrameContext& frameContext)
 {
-	if(sceneNodes.size() == 0)
-	{
-		std::cout << "skipping render() on empty scene" << std::endl;
-		exit(-1);
-		return;
-	}
+    (void)frameContext;
 
-	glm::vec3 lightPos = camera->position + glm::vec3(10.0, 50.0, 0.0);
+    if (sceneNodes.empty())
+    {
+        std::cout << "skipping render() on empty scene" << std::endl;
+        return;
+    }
 
-	GLuint depthProgramId = shadowProgram->getId();
-	glm::mat4 lightProjection, lightView;
-	glm::mat4 lightSpaceMatrix;
-	glm::mat4 model;
-	GLfloat near_plane = 0.6f, far_plane = 120.f;
-	lightProjection = glm::ortho(-100.0f, 100.0f, -100.0f, 100.0f, near_plane, far_plane);
-	//lightProjection = glm::perspective(60.0f, (GLfloat)shadowWidth / (GLfloat)shadowHeight, near_plane, far_plane); // Note that if you use a perspective projection matrix you'll have to change the light position as the current light position isn't enough to reflect the whole scene.
-	lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0, 1.0, 0.0));
-	lightSpaceMatrix = lightProjection * lightView;
+    Uint64 frameStartCounter = SDL_GetPerformanceCounter();
+    double shadowPassMs = 0.0;
+    int drawCalls = 0;
+    int visibleNodes = 0;
+    int occlusionCulledNodes = 0;
 
+    // Fix: Use consistent light position (was previously camera.position + glm::vec3(0.0f, 100.0f, 0.0f) in bufferToGpu)
+    const glm::vec3 lightPos = camera.position + Math::getLightPositionOffset();
+    glm::mat4 lightProjection, lightView, lightSpaceMatrix;
+    
+    backend->fitDirectionalShadowMatrix(camera, lightPos, shadowWidth, shadowHeight,
+                                               lightView, lightProjection, lightSpaceMatrix);
 
-	// Set shadow program uniforms: uniform mat4 lightSpaceMatrix; uniform mat4 model;
-	shadowProgram->uniformLoader->addUniform(
-			"lightSpaceMatrix",
-			new UniformMat4(lightSpaceMatrix)
-	);
+    if (shadowsEnabled)
+    {
+        Uint64 shadowStart = SDL_GetPerformanceCounter();
+        shadowMap = createShadowMap(camera);
+        const double perfFreq = static_cast<double>(SDL_GetPerformanceFrequency());
+        shadowPassMs = (static_cast<double>(SDL_GetPerformanceCounter() - shadowStart) * 1000.0) / perfFreq;
+    }
 
-	gpuProgram->uniformLoader->addUniform(
-			"lightSpaceMatrix",
-			new UniformMat4(lightSpaceMatrix)
-	);
+    // Fix: Pass the computed light space matrix to the backend for per-frame updates
+    if (backend)
+    {
+        backend->updateLightUniforms(camera, lightSpaceMatrix, lightPos);
+    }
 
-	UniformVec3* lightPosUniform = (UniformVec3*) gpuProgram->uniformLoader->get("lightPos");
-	lightPosUniform->set(lightPos);
+    backend->beginFrame(frameContext);
 
-	if(shadowsEnabled) shadowMap = createShadowMap(*camera);
-	glUseProgram(0);
+    frustum.extractFrustum(camera.projectionMatrix * camera.modelViewMatrix);
+    updateOcclusionQueryResults();
 
+    std::vector<int> visibleNodeIds;
+    collectVisibleNodes(visibleNodeIds);
 
-	glBindVertexArray(vao);
-	glEnableVertexAttribArray(0);
-	glEnableVertexAttribArray(1);
-	glEnableVertexAttribArray(2);
+    // Fallback: if culling rejects everything, render all nodes to avoid a black frame.
+    if (visibleNodeIds.empty() && !sceneNodes.empty())
+    {
+        visibleNodeIds.reserve(sceneNodes.size());
+        for (size_t i = 0; i < sceneNodes.size(); ++i)
+        {
+            visibleNodeIds.push_back(static_cast<int>(i));
+        }
+    }
 
-#if _DEBUG
-	checkForGLError();
-#endif
+    const int frustumCulledNodes = static_cast<int>(sceneNodes.size()) - static_cast<int>(visibleNodeIds.size());
 
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+    struct SortKey { GLuint textureId; GLuint startPosition; int nodeIndex; };
+    std::vector<SortKey> visibleNodesSorted;
+    visibleNodesSorted.reserve(visibleNodeIds.size());
+    
+    for (int sceneIdx : visibleNodeIds)
+    {
+        visibleNodesSorted.push_back({sceneNodes[static_cast<size_t>(sceneIdx)].diffuseTextureId,
+                                      sceneNodes[static_cast<size_t>(sceneIdx)].startPosition,
+                                      sceneIdx});
+    }
 
-	frustum.extractFrustum(camera->modelViewMatrix, camera->projectionMatrix);
-	for(int i=0; i<sceneNodes.size(); i++)
-	{
-		glm::vec4 position(sceneNodes[i].lx, sceneNodes[i].ly, sceneNodes[i].lz, 1.f);
+    if (occlusionCullingEnabled && !occlusionQueries.empty())
+    {
+        std::vector<SortKey> afterOcclusion;
+        afterOcclusion.reserve(visibleNodesSorted.size());
+        for (auto& key : visibleNodesSorted)
+        {
+            const int sceneIdx = key.nodeIndex;
+            if (!occlusionVisible[static_cast<size_t>(sceneIdx)])
+            {
+                occlusionSkipCounters[static_cast<size_t>(sceneIdx)]++;
+                if (occlusionSkipCounters[static_cast<size_t>(sceneIdx)] < occlusionRetestFrames)
+                {
+                    ++occlusionCulledNodes;
+                    continue;
+                }
+            }
+            occlusionSkipCounters[static_cast<size_t>(sceneIdx)] = 0;
+            afterOcclusion.push_back(key);
+        }
+        visibleNodesSorted = std::move(afterOcclusion);
+    }
 
-		// Frustum culling test
-		if( frustum.spherePartiallyInFrustum(position.x, position.y, position.z, sceneNodes[i].boundingSphere) > 0)
-		{
+    std::sort(visibleNodesSorted.begin(), visibleNodesSorted.end(),
+        [](const SortKey& a, const SortKey& b) {
+            if (a.textureId == b.textureId) return a.startPosition < b.startPosition;
+            return a.textureId < b.textureId;
+        });
 
-			gpuProgram->use();
-#if _DEBUG
-			checkForGLError();
-#endif
+    std::vector<RenderCommand> renderCommands;
+    renderCommands.reserve(visibleNodesSorted.size());
+    for (const auto& key : visibleNodesSorted)
+    {
+        RenderCommand cmd;
+        cmd.type = RenderCommand::CommandType::DRAW_ELEMENTS;
+        cmd.node = &sceneNodes[static_cast<size_t>(key.nodeIndex)];
+        renderCommands.push_back(cmd);
+    }
 
+    backend->submit(renderCommands);
+    checkForGLError();
+    backend->endFrame();
 
-			UniformMat4* viewUniform = (UniformMat4*) gpuProgram->uniformLoader->get("view");
-			viewUniform->set(camera->modelViewMatrix);
+    drawCalls = static_cast<int>(renderCommands.size());
+    visibleNodes = static_cast<int>(visibleNodesSorted.size());
 
-			glActiveTexture(GL_TEXTURE0);
-#if _DEBUG
-			checkForGLError();
-#endif
+    const Uint64 frameEndCounter = SDL_GetPerformanceCounter();
+    const double perfFreq = static_cast<double>(SDL_GetPerformanceFrequency());
+    
+    perfStats.cpuFrameMs = (static_cast<double>(frameEndCounter - frameStartCounter) * 1000.0) / perfFreq;
+    perfStats.shadowPassMs = shadowPassMs;
+    perfStats.drawCalls = drawCalls;
+    perfStats.visibleNodes = visibleNodes;
+    perfStats.totalNodes = static_cast<int>(sceneNodes.size());
+    perfStats.frustumCulledNodes = frustumCulledNodes;
+    perfStats.occlusionCulledNodes = occlusionCulledNodes;
+    perfStats.camera = &camera;
+    
+    if (lastPerfCounter != 0)
+    {
+        const double frameSeconds = static_cast<double>(frameEndCounter - lastPerfCounter) / perfFreq;
+        if (frameSeconds > 0.0) perfStats.fps = 1.0 / frameSeconds;
+    }
+    lastPerfCounter = frameEndCounter;
+}
 
-
-			glBindTexture(GL_TEXTURE_2D,  sceneNodes[i].diffuseTextureId );
-
-
-#if _DEBUG
-			checkForGLError();
-#endif
-			if(shadowsEnabled) {
-				glActiveTexture(GL_TEXTURE1);
-				glBindTexture(GL_TEXTURE_2D,  shadowMap );
-			}
-			gpuProgram->uniformLoader->load();
-
-#if _DEBUG
-			checkForGLError();
-#endif
-
-			glDrawRangeElementsBaseVertex(sceneNodes[i].primativeMode, sceneNodes[i].startPosition, sceneNodes[i].endPosition,
-					(sceneNodes[i].endPosition - sceneNodes[i].startPosition), GL_UNSIGNED_INT, (void*)(0), sceneNodes[i].startPosition);
-
-#if _DEBUG
-			checkForGLError();
-#endif
-		}
-	}
-
-	if(shadowsEnabled == 1) glDeleteTextures(1, &shadowMap);
-
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	glDisableVertexAttribArray(0);
-	glDisableVertexAttribArray(1);
-	glDisableVertexAttribArray(2);
-	glBindVertexArray(0);
-
-#if _DEBUG
-	checkForGLError();
-#endif
+bool Renderer::isVerboseEnabled() const
+{
+    return configLoader ? configLoader->getBool("renderer.verbose") : false;
 }

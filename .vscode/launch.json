@@ -1,0 +1,49 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "sdlglapp: Debug (cube.obj)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/Debug/sdlglapp.exe",
+            "args": [
+                "scene.obj"
+            ],
+            "cwd": "${workspaceFolder}/build",
+            "console": "integratedTerminal",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "${workspaceFolder}/build/sdl3-submodule/Debug;${workspaceFolder}/build/sdl3-image-submodule/Debug;${workspaceFolder}/build/glad-submodule/Debug;${env:PATH}"
+                }
+            ],
+            "preLaunchTask": "build-sdlglapp-debug"
+        },
+        {
+            "name": "sdlglapp: Debug (prompt for model)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/Debug/sdlglapp.exe",
+            "args": [
+                "${input:modelPath}"
+            ],
+            "cwd": "${workspaceFolder}/build",
+            "console": "integratedTerminal",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "${workspaceFolder}/build/sdl3-submodule/Debug;${workspaceFolder}/build/sdl3-image-submodule/Debug;${workspaceFolder}/build/glad-submodule/Debug;${env:PATH}"
+                }
+            ],
+            "preLaunchTask": "build-sdlglapp-debug"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "modelPath",
+            "type": "promptString",
+            "description": "OBJ path relative to models directory (for example, cube.obj)",
+            "default": "cube.obj"
+        }
+    ]
+}

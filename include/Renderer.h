@@ -4,86 +4,145 @@
 #include "Camera.h"
 #include "Common.h"
 #include "Frustum.h"
+#include "RenderBackend.h"
 #include "GpuProgram.h"
 #include "Material.h"
 #include "SceneNode.h"
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+#include <unordered_map>
+#include <mutex>
 
+#if __has_include(<SDL3_image/SDL_image.h>)
+#include <SDL3_image/SDL_image.h>
+#elif __has_include(<SDL_image.h>)
 #include <SDL_image.h>
-#include <SDL_thread.h>
-
-void _checkForGLError(const char *file, int line);
-// Usage
-// [some opengl calls]
-// glCheckError();
-#define checkForGLError() _checkForGLError(__FILE__,__LINE__)
-
-// GLAD_DEBUG is only defined if the c-debug generator was used
-#ifdef GLAD_DEBUG
-// logs every gl call to the console
-void pre_gl_call(const char *name, void *funcptr, int len_args, ...);
+#else
+#error "SDL_image headers not found"
 #endif
 
-// Load configuration variables
-class ConfigLoader
-{
-protected:
-	const char* filename;
-	std::map<std::string, std::string> vars;
-public:
-	// Load a .cfg file
-	ConfigLoader(const char*);
-	~ConfigLoader();
-	bool getBool(const char*);
-	bool getBool(std::string&);
-	int getInt(const char*);
-	int getInt(std::string&);
-	float getFloat(const char*);
-	float getFloat(std::string&);
-	std::string& getVar(const char*);
-	std::string& getVar(std::string&);
-	bool hasVar(const char*);
-	bool hasVar(std::string&);
-	friend std::ostream& operator<<(std::ostream& os, ConfigLoader& dt); // used for debugging
-	friend std::ostream& operator<<(std::ostream& os, ConfigLoader* dt); // used for debugging
-};
+#if __has_include(<SDL3/SDL_thread.h>)
+#include <SDL3/SDL_thread.h>
+#elif __has_include(<SDL_thread.h>)
+#include <SDL_thread.h>
+#endif
 
+// GLAD_DEBUG logging (only active when GLAD_DEBUG is defined)
+#ifdef GLAD_DEBUG
+void pre_gl_call(const char* name, void* funcptr, int len_args, ...);
+#endif
+
+class ConfigLoader;
+
+/**
+ * @class Renderer
+ * @brief High-level scene rendering manager with frustum culling and shadow mapping
+ * 
+ * Manages scene graph data, GPU buffer allocation, and rendering pipeline.
+ * Thread-safe for scene loading via mutex protection.
+ */
 class Renderer
 {
 public:
+    struct PerfStats {
+        double cpuFrameMs = 0.0;
+        double shadowPassMs = 0.0;
+        double fps = 0.0;
+        int drawCalls = 0;
+        int visibleNodes = 0;
+        int totalNodes = 0;
+        int frustumCulledNodes = 0;
+        int occlusionCulledNodes = 0;
+        const Camera* camera = nullptr;
+    };
+
     Renderer();
     ~Renderer();
-    void addMaterial(Material*);
-    void addSceneNode(SceneNode*);
-    void addTexture(const char*, GLuint*, SDL_Surface*);
-    void addTexture(const char*, GLuint*, Texture*);
-    void addTexture(const char*, GLuint*);
-    void addWavefront(const char*, glm::mat4);
-    bool buildScene(Camera&, const char*); //TODO check if cam is needed
-    bool buildScene(Camera&);
+    
+    // Non-copyable
+    Renderer(const Renderer&) = delete;
+    Renderer& operator=(const Renderer&) = delete;
+    
+    void addMaterial(std::string_view name, const Material& material);
+    void addSceneNode(SceneNode node);
+    void addTexture(std::string_view textureFileName, GLuint* textureId, std::unique_ptr<SDL_Surface, SdlSurfaceDeleter> surface);
+    void addTexture(std::string_view textureFileName, GLuint* textureId, const Texture* texture);
+    void addTexture(std::string_view textureFileName, GLuint* textureId);
+    void addWavefront(std::string_view fileName, const glm::mat4& matrix);
+    void setBackend(std::unique_ptr<IRenderBackend> backend);
+    
+    [[nodiscard]] bool buildScene(Camera& camera);
+    [[nodiscard]] bool buildScene(Camera& camera, std::string_view cacheFilename);
 
-    void bufferToGpu(Camera&, bool);
-    bool checkScene();
-    GLuint createShadowMap(Camera&);
-    void render(Camera*);
+    void bufferToGpu(Camera& camera, bool loadCachedScene);
+    [[nodiscard]] bool checkScene() const;
+    void render(Camera& camera, const FrameContext& frameContext);
     void enableShadows();
     void disableShadows();
-	std::vector<Vertex> vertexData;
+    GLuint createShadowMap(Camera& camera);
+    
+    [[nodiscard]] IRenderBackend* getBackend() const { return backend.get(); }
+    [[nodiscard]] const PerfStats& getPerfStats() const { return perfStats; }
+    [[nodiscard]] bool isProfilerEnabled() const { return profilerEnabled; }
+    [[nodiscard]] bool isVerboseEnabled() const;
+    [[nodiscard]] bool getShadowsEnabled() const { return shadowsEnabled; }
+
+    // Public data access (for backend use) - protected by sceneDataMutex during writes
     std::vector<SceneNode> sceneNodes;
+    std::vector<Vertex> vertexData;
     std::vector<GLuint> indices;
-    std::map<std::string, Material> materials;
-    std::map<std::string, Texture> textures;
-    ConfigLoader* configLoader;
+    std::unordered_map<std::string, Material> materials;
+    std::unordered_map<std::string, std::shared_ptr<Texture>> textures;
+    std::unique_ptr<ConfigLoader> configLoader;
     std::string cacheFileName;
+
 private:
-    bool shadowsEnabled;
-    GLuint vao, vbo, ibo;
-    GLuint startPosition;
-    GLuint shadowMap, depthMapFBO;
-    glm::mat4 modelViewProjectionMatrix;
-    GpuProgram *gpuProgram, *shadowProgram;
+    struct CullNode {
+        float cx = 0.0f, cy = 0.0f, cz = 0.0f;
+        float radius = 0.0f;
+        std::size_t leftChild = static_cast<std::size_t>(-1);
+        std::size_t rightChild = static_cast<std::size_t>(-1);
+        std::size_t firstLeaf = static_cast<std::size_t>(-1);
+        int leafCount = 0;
+    };
+
+    // Thread-safe scene loading
+    mutable std::mutex sceneDataMutex;
+    
+    int buildCullNode(std::vector<int>& sortedIndices, int start, int end);
+    void rebuildScenegraph();
+    void collectVisibleNodes(std::vector<int>& outVisible);
+    void updateOcclusionQueryResults();
+    std::shared_ptr<Texture> textureFromSurface(std::unique_ptr<SDL_Surface, SdlSurfaceDeleter> image);
+    int createBinCacheInternal();
+    static int createBinCacheThread(void* rendererPtr) {
+        return static_cast<Renderer*>(rendererPtr)->createBinCacheInternal();
+    }
+
+
+    bool shadowsEnabled = false;
+    bool profilerEnabled = false;
+    GLuint shadowMap = 0;
+    int shadowWidth = 2048;
+    int shadowHeight = 2048;
+    bool hierarchicalCullingEnabled = true;
+    bool occlusionCullingEnabled = true;
+    int cullLeafSize = 16;
+    int occlusionRetestFrames = 8;
+    int occlusionMinSamples = 1;
+    
+    PerfStats perfStats{};
+    Uint64 lastPerfCounter = 0;
     Frustum frustum;
-    int shadowWidth, shadowHeight;
-    SDL_Thread *binCacheWriterThread;
+    void* binCacheWriterThread = nullptr;
+    std::vector<CullNode> cullNodes;
+    std::vector<int> cullLeafNodeIndices;
+    std::vector<GLuint> occlusionQueries;
+    std::vector<unsigned char> occlusionVisible;
+    std::vector<int> occlusionSkipCounters;
+    std::unique_ptr<IRenderBackend> backend;
 };
 
-#endif
+#endif // _RENDERER_H_

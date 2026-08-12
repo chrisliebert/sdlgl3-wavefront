@@ -1,124 +1,121 @@
-#include "Common.h"
 #include "GpuProgram.h"
 
-Uniform::~Uniform() {
-
+// Uniform implementation
+GLuint Uniform::getLocation()
+{
+    return location;
 }
 
 void Uniform::setLocation(GLuint _location)
 {
-	location = _location;
+    location = _location;
 }
 
-GLuint Uniform::getLocation()
-{
-	return location;
-}
-
-UniformMat4::UniformMat4(glm::mat4& mat)
-{
-	matrix = mat;
-}
+// UniformMat4 implementation
+UniformMat4::UniformMat4(const glm::mat4& mat) : matrix(mat) {}
 
 void UniformMat4::load()
 {
-	glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(matrix));
+    glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(matrix));
 }
 
-void UniformMat4::set(glm::mat4& mat)
+void UniformMat4::set(const glm::mat4& mat)
 {
-	matrix = mat;
+    matrix = mat;
 }
 
-UniformVec3::UniformVec3(glm::vec3& vec)
-{
-	vector = vec;
-}
+// UniformVec3 implementation
+UniformVec3::UniformVec3(const glm::vec3& vec) : vector(vec) {}
 
 void UniformVec3::load()
 {
-	glUniform3f(location, vector.x, vector.y, vector.z);
+    glUniform3f(location, vector.x, vector.y, vector.z);
 }
 
-void UniformVec3::set(glm::vec3& vec)
+void UniformVec3::set(const glm::vec3& vec)
 {
-	vector = vec;
+    vector = vec;
 }
 
-UniformInt::UniformInt(GLint _i)
-{
-	i = _i;
-}
+// UniformInt implementation
+UniformInt::UniformInt(GLint val) : i(val) {}
 
 void UniformInt::load()
 {
-	glUniform1i(location, i);
+    glUniform1i(location, i);
 }
 
-void UniformInt::set(GLint _i)
+void UniformInt::set(GLint val)
 {
-	i = _i;
+    i = val;
 }
 
+// UniformLoader implementation
 UniformLoader::UniformLoader(GLuint _programId)
+    : programId(_programId)
+{}
+
+UniformLoader::~UniformLoader() = default;
+
+void UniformLoader::addUniform(std::string_view name, UniformPtr uniform)
 {
-	programId = _programId;
+    if (uniform == nullptr) {
+        fprintf(stderr, "Cannot add null uniform for '%s'\n", std::string(name).c_str());
+        return;
+    }
+    
+    GLuint loc = glGetUniformLocation(programId, std::string(name).c_str());
+    if (loc == static_cast<GLuint>(-1)) {
+        fprintf(stderr, "Uniform '%s' not found in shader program\n", std::string(name).c_str());
+        return;
+    }
+    uniform->setLocation(loc);
+    uniforms[std::string(name)] = std::move(uniform);
 }
 
-UniformLoader::~UniformLoader()
+Uniform* UniformLoader::get(std::string_view name) const
 {
-    for (std::map<std::string, Uniform*>::iterator it=uniforms.begin(); it!=uniforms.end(); ++it) {
-    	if(it->second != NULL) delete it->second;
+    auto it = uniforms.find(std::string(name));
+    if (it == uniforms.end()) {
+        return nullptr;
+    }
+    return it->second.get();
+}
+
+void UniformLoader::load() const
+{
+    for (const auto& [key, uniform] : uniforms) {
+        if (uniform) {
+            uniform->load();
+        }
     }
 }
 
-Uniform* UniformLoader::get(const char* lookup)
-{
-	std::string lookupStr(lookup);
-	if(uniforms.find(lookupStr) == uniforms.end()) {
-		std::cerr << "Uniform " << lookupStr << " does not exist." << std::endl;
-		exit(5);
-	}
-	return uniforms[lookupStr];
-}
-
-void UniformLoader::load()
-{
-	for (std::map<std::string, Uniform*>::iterator it=uniforms.begin(); it!=uniforms.end(); ++it) {
-		it->second->load();
-	}
-}
-
-void UniformLoader::addUniform(const char* name, Uniform* uniform)
-{
-	std::string nameStr(name);
-	uniform->setLocation(glGetUniformLocation(programId, name));
-	uniforms[nameStr] = uniform;
-}
-
+// GpuProgram implementation
 GpuProgram::GpuProgram()
-{
-	id = glCreateProgram();
-	uniformLoader = new UniformLoader(id);
-}
+    : id(glCreateProgram())
+    , uniformLoader(std::make_unique<UniformLoader>(id))
+{}
 
 GpuProgram::~GpuProgram()
 {
-    glDeleteProgram(id);
-    if(uniformLoader != NULL) delete uniformLoader;
+    if (id != 0) {
+        glDeleteProgram(id);
+        id = 0;
+    }
+}
+
+GLuint GpuProgram::getId() const
+{
+    return id;
 }
 
 void GpuProgram::attachShader(Shader& _shader)
 {
-	glAttachShader(id, _shader.getId());
+    glAttachShader(id, _shader.getId());
 }
 
-GLuint GpuProgram::getId()
+void GpuProgram::use() const
 {
-	return id;
-}
-
-void GpuProgram::use()
-{
-	glUseProgram(id);
+    glUseProgram(id);
 }
