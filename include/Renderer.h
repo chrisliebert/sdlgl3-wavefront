@@ -14,6 +14,7 @@
 #include <vector>
 #include <unordered_map>
 #include <mutex>
+#include <atomic>
 
 #if __has_include(<SDL3_image/SDL_image.h>)
 #include <SDL3_image/SDL_image.h>
@@ -132,6 +133,7 @@ private:
     int cullLeafSize = 16;
     int occlusionRetestFrames = 8;
     int occlusionMinSamples = 1;
+    bool frustumCullingEnabled = true;
     
     PerfStats perfStats{};
     Uint64 lastPerfCounter = 0;
@@ -142,6 +144,19 @@ private:
     std::vector<GLuint> occlusionQueries;
     std::vector<unsigned char> occlusionVisible;
     std::vector<int> occlusionSkipCounters;
+    std::vector<int> visibleNodeIdsScratch;
+    struct SortKey { GLuint textureId; GLuint startPosition; int nodeIndex; };
+    std::vector<SortKey> visibleNodesSortedScratch;
+    std::vector<SortKey> occlusionFilteredScratch;
+    std::unordered_map<GLuint, std::vector<SortKey>> textureBucketsScratch;
+    std::vector<GLuint> textureBucketOrderScratch;
+    std::vector<RenderCommand> renderCommandsScratch;
+
+    bool shadowDirty = true;
+    bool shadowInitialized = false;
+    glm::vec3 lastShadowLightPos{0.0f, 0.0f, 0.0f};
+    size_t sceneRevision = 0;
+    size_t shadowSceneRevision = 0;
     std::unique_ptr<IRenderBackend> backend;
 };
 

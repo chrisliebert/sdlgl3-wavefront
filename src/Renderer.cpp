@@ -10,6 +10,7 @@
 #include <limits>
 #include <algorithm>
 #include <cctype>
+#include <map>
 
 
 
@@ -50,15 +51,8 @@ Renderer::Renderer()
     cullLeafSize = configLoader->hasVar("renderer.culling.leafSize") ? configLoader->getInt("renderer.culling.leafSize") : 16;
     occlusionRetestFrames = configLoader->hasVar("renderer.culling.occlusionRetestFrames") ? configLoader->getInt("renderer.culling.occlusionRetestFrames") : 8;
     occlusionMinSamples = configLoader->hasVar("renderer.culling.occlusionMinSamples") ? configLoader->getInt("renderer.culling.occlusionMinSamples") : 1;
+    frustumCullingEnabled = configLoader->hasVar("renderer.culling.frustum") ? configLoader->getBool("renderer.culling.frustum") : true;
 
-#if SDL_MAJOR_VERSION < 3
-    int flags = IMG_INIT_JPG | IMG_INIT_PNG | IMG_INIT_TIF;
-    int initted = IMG_Init(flags);
-    if ((initted & flags) != flags)
-    {
-        std::cerr << "SDL_image init warning: " << SDL_GetError() << std::endl;
-    }
-#endif
 }
 
 Renderer::~Renderer()
@@ -88,9 +82,6 @@ Renderer::~Renderer()
         backend->shutdown();
     }
 
-#if SDL_MAJOR_VERSION < 3
-    IMG_Quit();
-#endif
 }
 
 void Renderer::addMaterial(std::string_view name, const Material& material)
@@ -103,17 +94,15 @@ void Renderer::addSceneNode(SceneNode node)
 {
     std::lock_guard<std::mutex> lock(sceneDataMutex);
     sceneNodes.push_back(std::move(node));
+    ++sceneRevision;
+    shadowDirty = true;
 }
 
 namespace {
     int getTextureMode(SDL_Surface* image)
     {
         int bpp = 0;
-#if SDL_MAJOR_VERSION >= 3
-        bpp = static_cast<int>(SDL_BYTESPERPIXEL(image->format));
-#else
-        bpp = image->format->BytesPerPixel;
-#endif
+            bpp = static_cast<int>(SDL_BYTESPERPIXEL(image->format));
         return (bpp == 4) ? GL_RGBA : GL_RGB;
     }
 
@@ -201,11 +190,7 @@ std::shared_ptr<Texture> Renderer::textureFromSurface(std::unique_ptr<SDL_Surfac
     texture->mode = getTextureMode(image.get());
     texture->width = static_cast<unsigned>(image->w);
     texture->height = static_cast<unsigned>(image->h);
-#if SDL_MAJOR_VERSION >= 3
     texture->bpp = static_cast<unsigned>(SDL_BYTESPERPIXEL(image->format));
-#else
-    texture->bpp = static_cast<unsigned>(image->format->BytesPerPixel);
-#endif
     // Copy pixel data to owned buffer (prevents use-after-free)
     const size_t dataSize = static_cast<size_t>(image->w) * image->h * texture->bpp;
     if (dataSize > 0 && image->pixels)
@@ -222,7 +207,7 @@ void Renderer::addTexture(std::string_view textureFileName, GLuint* textureId, s
     
     if (!image)
     {
-        std::string blankPath = std::string(TEXTURE_DIRECTORY) + DIRECTORY_SEPARATOR + "DEFAULT_BLANK_TEXTURE.png";
+        const std::string blankPath = (std::filesystem::path(TEXTURE_DIRECTORY) / "DEFAULT_BLANK_TEXTURE.png").string();
         
         auto it = textures.find(blankPath);
         if (it == textures.end())
@@ -336,9 +321,13 @@ void Renderer::addWavefront(std::string_view fileName, const glm::mat4& matrix)
 
     std::filesystem::path parentPath = modelPath.parent_path();
     std::string modelDirectory = parentPath.empty() ? std::string(".") : parentPath.lexically_normal().string();
-    if (!modelDirectory.empty() && modelDirectory.back() != '\\' && modelDirectory.back() != '/')
+    if (!modelDirectory.empty())
     {
-        modelDirectory += DIRECTORY_SEPARATOR;
+        modelDirectory = std::filesystem::path(modelDirectory).lexically_normal().generic_string();
+        if (!modelDirectory.empty() && modelDirectory.back() != '/')
+        {
+            modelDirectory.push_back('/');
+        }
     }
     std::string fileNameStr = modelPath.lexically_normal().string();
     
@@ -359,6 +348,20 @@ void Renderer::addWavefront(std::string_view fileName, const glm::mat4& matrix)
     attrib = reader.GetAttrib();
     shapes = reader.GetShapes();
     materialsList = reader.GetMaterials();
+
+    if (attrib.vertices.empty() || shapes.empty())
+    {
+        std::cerr << "OBJ validation failed: no geometry found in " << fileName << std::endl;
+        return;
+    }
+
+    static constexpr const char* kDefaultMaterialName = "__default__";
+    if (materials.find(kDefaultMaterialName) == materials.end())
+    {
+        Material defaultMaterial{};
+        defaultMaterial.setName(kDefaultMaterialName);
+        addMaterial(kDefaultMaterialName, defaultMaterial);
+    }
 
     // Load materials with proper string handling
     int materialCount = 0;
@@ -607,12 +610,19 @@ void Renderer::addWavefront(std::string_view fileName, const glm::mat4& matrix)
             if (f < shapes[i].mesh.material_ids.size())
                 faceMaterialId = shapes[i].mesh.material_ids[f];
 
+            if (faceMaterialId < 0 || static_cast<size_t>(faceMaterialId) >= materialsList.size())
+            {
+                faceMaterialId = -1;
+            }
+
             if (faceMaterialId != currentMaterialId) {
                 if (!localVertices.empty()) {
                     SceneNode sceneNode;
                     sceneNode.setName(shapes[i].name);
                     if (currentMaterialId >= 0 && static_cast<size_t>(currentMaterialId) < materialsList.size()) {
                         sceneNode.setMaterial(materialsList[currentMaterialId].name);
+                    } else {
+                        sceneNode.setMaterial(kDefaultMaterialName);
                     }
                     sceneNode.vertexDataSize = localVertices.size();
                     sceneNode.vertexData = std::make_unique<Vertex[]>(sceneNode.vertexDataSize);
@@ -633,6 +643,11 @@ void Renderer::addWavefront(std::string_view fileName, const glm::mat4& matrix)
             bool faceValid = true;
             std::vector<Vertex> faceVertices;
             faceVertices.reserve(fv);
+
+            if (fv != 3)
+            {
+                faceValid = false;
+            }
 
             for (size_t v = 0; v < fv; ++v)
             {
@@ -688,6 +703,8 @@ void Renderer::addWavefront(std::string_view fileName, const glm::mat4& matrix)
             sceneNode.setName(shapes[i].name);
             if (currentMaterialId >= 0 && static_cast<size_t>(currentMaterialId) < materialsList.size()) {
                 sceneNode.setMaterial(materialsList[currentMaterialId].name);
+            } else {
+                sceneNode.setMaterial(kDefaultMaterialName);
             }
             sceneNode.vertexDataSize = localVertices.size();
             sceneNode.vertexData = std::make_unique<Vertex[]>(sceneNode.vertexDataSize);
@@ -740,9 +757,17 @@ int Renderer::createBinCacheInternal()
     header.numTextures = textures.size();
     binFile.write(reinterpret_cast<const char*>(&header), sizeof(BinCacheFileHeader));
 
-    // Write materials (field-by-field, no raw struct dump)
+    // Write materials in key order for deterministic cache output.
+    std::map<std::string, const Material*> orderedMaterials;
     for (const auto& [name, mat] : materials)
     {
+        orderedMaterials.emplace(name, &mat);
+    }
+
+    // Write materials (field-by-field, no raw struct dump)
+    for (const auto& [name, matPtr] : orderedMaterials)
+    {
+        const Material& mat = *matPtr;
         binFile.write(mat.name, sizeof(mat.name));
         binFile.write(reinterpret_cast<const char*>(mat.ambient), sizeof(mat.ambient));
         binFile.write(reinterpret_cast<const char*>(mat.diffuse), sizeof(mat.diffuse));
@@ -869,6 +894,9 @@ bool Renderer::buildScene(Camera& camera)
     {
         node.vertexData.reset();
     }
+
+    ++sceneRevision;
+    shadowDirty = true;
 
     return checkScene();
 }
@@ -1108,6 +1136,8 @@ bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
         return false;
     }
 
+    ++sceneRevision;
+    shadowDirty = true;
     return checkScene();
 }
 
@@ -1117,6 +1147,12 @@ void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)
 
     if (!loadCachedScene && configLoader->getBool("renderer.createBinObj"))
     {
+        if (binCacheWriterThread != nullptr)
+        {
+            int status = 0;
+            SDL_WaitThread(static_cast<SDL_Thread*>(binCacheWriterThread), &status);
+            binCacheWriterThread = nullptr;
+        }
         binCacheWriterThread = SDL_CreateThread(createBinCacheThread, "BinCacheWriterThread", this);
     }
 
@@ -1328,10 +1364,22 @@ void Renderer::render(Camera& camera, const FrameContext& frameContext)
 
     if (shadowsEnabled)
     {
-        Uint64 shadowStart = SDL_GetPerformanceCounter();
-        shadowMap = createShadowMap(camera);
-        const double perfFreq = static_cast<double>(SDL_GetPerformanceFrequency());
-        shadowPassMs = (static_cast<double>(SDL_GetPerformanceCounter() - shadowStart) * 1000.0) / perfFreq;
+        const bool lightMoved = !shadowInitialized || glm::distance(lastShadowLightPos, lightPos) > 0.001f;
+        const bool sceneChanged = (sceneRevision != shadowSceneRevision);
+        shadowDirty = shadowDirty || lightMoved || sceneChanged;
+
+        if (shadowDirty)
+        {
+            Uint64 shadowStart = SDL_GetPerformanceCounter();
+            shadowMap = createShadowMap(camera);
+            const double perfFreq = static_cast<double>(SDL_GetPerformanceFrequency());
+            shadowPassMs = (static_cast<double>(SDL_GetPerformanceCounter() - shadowStart) * 1000.0) / perfFreq;
+
+            lastShadowLightPos = lightPos;
+            shadowSceneRevision = sceneRevision;
+            shadowInitialized = true;
+            shadowDirty = false;
+        }
     }
 
     // Fix: Pass the computed light space matrix to the backend for per-frame updates
@@ -1342,40 +1390,53 @@ void Renderer::render(Camera& camera, const FrameContext& frameContext)
 
     backend->beginFrame(frameContext);
 
-    frustum.extractFrustum(camera.projectionMatrix * camera.modelViewMatrix);
+    if (frustumCullingEnabled)
+    {
+        frustum.extractFrustum(camera.projectionMatrix * camera.modelViewMatrix);
+    }
     updateOcclusionQueryResults();
 
-    std::vector<int> visibleNodeIds;
-    collectVisibleNodes(visibleNodeIds);
-
-    // Fallback: if culling rejects everything, render all nodes to avoid a black frame.
-    if (visibleNodeIds.empty() && !sceneNodes.empty())
+    visibleNodeIdsScratch.clear();
+    if (frustumCullingEnabled)
     {
-        visibleNodeIds.reserve(sceneNodes.size());
+        collectVisibleNodes(visibleNodeIdsScratch);
+    }
+    else
+    {
+        visibleNodeIdsScratch.reserve(sceneNodes.size());
         for (size_t i = 0; i < sceneNodes.size(); ++i)
         {
-            visibleNodeIds.push_back(static_cast<int>(i));
+            visibleNodeIdsScratch.push_back(static_cast<int>(i));
         }
     }
 
-    const int frustumCulledNodes = static_cast<int>(sceneNodes.size()) - static_cast<int>(visibleNodeIds.size());
-
-    struct SortKey { GLuint textureId; GLuint startPosition; int nodeIndex; };
-    std::vector<SortKey> visibleNodesSorted;
-    visibleNodesSorted.reserve(visibleNodeIds.size());
-    
-    for (int sceneIdx : visibleNodeIds)
+    // Fallback: if culling rejects everything, render all nodes to avoid a black frame.
+    if (visibleNodeIdsScratch.empty() && !sceneNodes.empty())
     {
-        visibleNodesSorted.push_back({sceneNodes[static_cast<size_t>(sceneIdx)].diffuseTextureId,
-                                      sceneNodes[static_cast<size_t>(sceneIdx)].startPosition,
-                                      sceneIdx});
+        visibleNodeIdsScratch.reserve(sceneNodes.size());
+        for (size_t i = 0; i < sceneNodes.size(); ++i)
+        {
+            visibleNodeIdsScratch.push_back(static_cast<int>(i));
+        }
+    }
+
+    const int frustumCulledNodes = static_cast<int>(sceneNodes.size()) - static_cast<int>(visibleNodeIdsScratch.size());
+
+    visibleNodesSortedScratch.clear();
+    visibleNodesSortedScratch.reserve(visibleNodeIdsScratch.size());
+    
+    for (int sceneIdx : visibleNodeIdsScratch)
+    {
+        visibleNodesSortedScratch.push_back({sceneNodes[static_cast<size_t>(sceneIdx)].diffuseTextureId,
+                                             sceneNodes[static_cast<size_t>(sceneIdx)].startPosition,
+                                             sceneIdx});
     }
 
     if (occlusionCullingEnabled && !occlusionQueries.empty())
     {
-        std::vector<SortKey> afterOcclusion;
-        afterOcclusion.reserve(visibleNodesSorted.size());
-        for (auto& key : visibleNodesSorted)
+        occlusionFilteredScratch.clear();
+        occlusionFilteredScratch.reserve(visibleNodesSortedScratch.size());
+        for (auto& key : visibleNodesSortedScratch)
         {
             const int sceneIdx = key.nodeIndex;
             if (!occlusionVisible[static_cast<size_t>(sceneIdx)])
@@ -1388,33 +1449,57 @@ void Renderer::render(Camera& camera, const FrameContext& frameContext)
                 }
             }
             occlusionSkipCounters[static_cast<size_t>(sceneIdx)] = 0;
-            afterOcclusion.push_back(key);
+            occlusionFilteredScratch.push_back(key);
         }
-        visibleNodesSorted = std::move(afterOcclusion);
+        visibleNodesSortedScratch.swap(occlusionFilteredScratch);
     }
 
-    std::sort(visibleNodesSorted.begin(), visibleNodesSorted.end(),
-        [](const SortKey& a, const SortKey& b) {
-            if (a.textureId == b.textureId) return a.startPosition < b.startPosition;
-            return a.textureId < b.textureId;
-        });
+    // Texture bucketing reduces wide key comparisons versus global sort.
+    textureBucketOrderScratch.clear();
+    for (auto& [textureId, bucket] : textureBucketsScratch)
+    {
+        bucket.clear();
+    }
 
-    std::vector<RenderCommand> renderCommands;
-    renderCommands.reserve(visibleNodesSorted.size());
-    for (const auto& key : visibleNodesSorted)
+    for (const auto& key : visibleNodesSortedScratch)
+    {
+        auto& bucket = textureBucketsScratch[key.textureId];
+        if (bucket.empty())
+        {
+            textureBucketOrderScratch.push_back(key.textureId);
+        }
+        bucket.push_back(key);
+    }
+
+    std::sort(textureBucketOrderScratch.begin(), textureBucketOrderScratch.end());
+
+    visibleNodesSortedScratch.clear();
+    for (GLuint textureId : textureBucketOrderScratch)
+    {
+        auto& bucket = textureBucketsScratch[textureId];
+        std::sort(bucket.begin(), bucket.end(),
+            [](const SortKey& a, const SortKey& b) {
+                return a.startPosition < b.startPosition;
+            });
+        visibleNodesSortedScratch.insert(visibleNodesSortedScratch.end(), bucket.begin(), bucket.end());
+    }
+
+    renderCommandsScratch.clear();
+    renderCommandsScratch.reserve(visibleNodesSortedScratch.size());
+    for (const auto& key : visibleNodesSortedScratch)
     {
         RenderCommand cmd;
         cmd.type = RenderCommand::CommandType::DRAW_ELEMENTS;
         cmd.node = &sceneNodes[static_cast<size_t>(key.nodeIndex)];
-        renderCommands.push_back(cmd);
+        renderCommandsScratch.push_back(cmd);
     }
 
-    backend->submit(renderCommands);
+    backend->submit(renderCommandsScratch);
     checkForGLError();
     backend->endFrame();
 
-    drawCalls = static_cast<int>(renderCommands.size());
-    visibleNodes = static_cast<int>(visibleNodesSorted.size());
+    drawCalls = static_cast<int>(renderCommandsScratch.size());
+    visibleNodes = static_cast<int>(visibleNodesSortedScratch.size());
 
     const Uint64 frameEndCounter = SDL_GetPerformanceCounter();
     const double perfFreq = static_cast<double>(SDL_GetPerformanceFrequency());

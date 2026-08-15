@@ -8,13 +8,14 @@
 #include <filesystem>
 #include <memory>
 #include <string_view>
+#include <atomic>
+#include <limits>
 
 #if __has_include("stb_image_write.h")
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 #endif
 
-#if SDL_MAJOR_VERSION >= 3
 #ifndef SDL_WINDOW_SHOWN
 #define SDL_WINDOW_SHOWN 0
 #endif
@@ -66,7 +67,6 @@ static std::string resolveModelPath(std::string_view modelInput)
 
     return {};
 }
-#endif
 
 class MyGLApp
 {
@@ -80,7 +80,7 @@ public:
 
     // Getters for private members accessed by LoadScene
     [[nodiscard]] Camera& getCamera() { return *camera; }
-    [[nodiscard]] bool& getSceneLoaded() { return sceneLoaded; }
+    [[nodiscard]] std::atomic<bool>& getSceneLoaded() { return sceneLoaded; }
     [[nodiscard]] Renderer* getRenderer() { return renderer.get(); }
     [[nodiscard]] const std::string& getModelFilename() const { return modelFilename; }
     [[nodiscard]] bool& getUseBinCache() { return useBinCache; }
@@ -104,7 +104,7 @@ private:
     Uint64 lastTimeNs = 0;
     bool windowGrab = false;
     bool showCursor = true;
-    bool sceneLoaded = false;
+    std::atomic<bool> sceneLoaded{false};
     bool useBinCache = false;
     bool mcp_capture_frame = false;
     bool moveForwardPressed = false;
@@ -140,7 +140,7 @@ MyGLApp::MyGLApp(std::string_view filename)
 {
     renderer = std::make_unique<Renderer>();
     startup(filename);
-    sceneLoaded = false;
+    sceneLoaded.store(false, std::memory_order_release);
 }
 
 MyGLApp::~MyGLApp()
@@ -186,10 +186,9 @@ static int LoadScene(void* appPtr)
     try
     {
         auto* app = static_cast<MyGLApp*>(appPtr);
-        std::string cacheFileName(CACHE_DIRECTORY);
-        cacheFileName += DIRECTORY_SEPARATOR;
-        cacheFileName += sanitizeCacheKey(app->getModelFilename());
-        cacheFileName += ".bin";
+        const std::filesystem::path cachePath = std::filesystem::path(CACHE_DIRECTORY) /
+            (sanitizeCacheKey(app->getModelFilename()) + ".bin");
+        std::string cacheFileName = cachePath.string();
         app->getRenderer()->cacheFileName = cacheFileName;
 
         bool sceneLoaded = false;
@@ -244,7 +243,7 @@ static int LoadScene(void* appPtr)
             std::cerr << "Unable to load scene" << std::endl;
             return -7;
         }
-        app->getSceneLoaded() = true;
+        app->getSceneLoaded().store(true, std::memory_order_release);
         return 0;
     }
     catch (const std::exception& ex)
@@ -270,13 +269,10 @@ bool MyGLApp::startup(std::string_view filename)
     lastTimeNs = SDL_GetTicksNS();
     modelFilename = std::string(filename);
     sceneLoaderThread = nullptr;
-    sceneLoaded = false;
+    sceneLoaded.store(false, std::memory_order_release);
     useBinCache = configLoader->getBool("useBinObjCache");
 
     Uint32 sdlInitFlags = SDL_INIT_VIDEO | SDL_INIT_EVENTS;
-#if SDL_MAJOR_VERSION < 3
-    sdlInitFlags |= SDL_INIT_EVERYTHING;
-#endif
 
     if (!SDL_Init(sdlInitFlags))
     {
@@ -300,9 +296,7 @@ bool MyGLApp::startup(std::string_view filename)
     }
 
     SDL_WindowFlags flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_OPENGL);
-#if SDL_MAJOR_VERSION < 3
     flags = static_cast<SDL_WindowFlags>(flags | SDL_WINDOW_SHOWN);
-#endif
 
     const int windowWidth = configLoader->hasVar("window.width") ? configLoader->getInt("window.width") : 1280;
     const int windowHeight = configLoader->hasVar("window.height") ? configLoader->getInt("window.height") : 720;
@@ -311,7 +305,6 @@ bool MyGLApp::startup(std::string_view filename)
     if (configLoader->getBool("window.fullscreen"))
         flags |= SDL_WINDOW_FULLSCREEN;
 
-#if SDL_MAJOR_VERSION >= 3
     window = SDL_CreateWindow("Loading",
         windowWidth,
         windowHeight,
@@ -322,14 +315,6 @@ bool MyGLApp::startup(std::string_view filename)
             configLoader->getInt("window.position.x"),
             configLoader->getInt("window.position.y"));
     }
-#else
-    window = SDL_CreateWindow("Loading",
-        hasWindowPosition ? configLoader->getInt("window.position.x") : SDL_WINDOWPOS_CENTERED,
-        hasWindowPosition ? configLoader->getInt("window.position.y") : SDL_WINDOWPOS_CENTERED,
-        windowWidth,
-        windowHeight,
-        flags);
-#endif
 
     if (window == nullptr)
     {
@@ -396,22 +381,13 @@ bool MyGLApp::startup(std::string_view filename)
 
     if (configLoader->getBool("window.grab"))
     {
-#if SDL_MAJOR_VERSION >= 3
         SDL_SetWindowMouseGrab(window, SDL_TRUE);
         SDL_SetWindowRelativeMouseMode(window, SDL_TRUE);
-#else
-        SDL_SetWindowGrab(window, SDL_TRUE);
-        SDL_SetRelativeMouseMode(SDL_TRUE);
-#endif
     }
 
     if (!showCursor)
     {
-#if SDL_MAJOR_VERSION >= 3
         SDL_HideCursor();
-#else
-        SDL_ShowCursor(SDL_DISABLE);
-#endif
     }
 
     checkForGLError();
@@ -452,24 +428,15 @@ void MyGLApp::keyDown(SDL_Keycode key)
             break;
         case SDLK_g:
             windowGrab = !windowGrab;
-#if SDL_MAJOR_VERSION >= 3
             if (window)
             {
                 SDL_SetWindowMouseGrab(window, windowGrab ? SDL_TRUE : SDL_FALSE);
                 SDL_SetWindowRelativeMouseMode(window, windowGrab ? SDL_TRUE : SDL_FALSE);
             }
-#else
-            SDL_SetWindowGrab(window, windowGrab ? SDL_TRUE : SDL_FALSE);
-            SDL_SetRelativeMouseMode(windowGrab ? SDL_TRUE : SDL_FALSE);
-#endif
             break;
         case SDLK_h:
             showCursor = !showCursor;
-#if SDL_MAJOR_VERSION >= 3
             if (showCursor) SDL_ShowCursor(); else SDL_HideCursor();
-#else
-            if (showCursor) SDL_ShowCursor(SDL_ENABLE); else SDL_ShowCursor(SDL_DISABLE);
-#endif
             break;
         case SDLK_w:
         case SDLK_UP:
@@ -546,7 +513,6 @@ void MyGLApp::update(const FrameContext& frameContext)
             runLevel = 0;
             return;
         }
-#if SDL_MAJOR_VERSION >= 3
         if (event.type == SDL_EVENT_KEY_DOWN)
         {
             keyDown(event.key.key);
@@ -618,17 +584,10 @@ void MyGLApp::update(const FrameContext& frameContext)
             moveLeftPressed = false;
             sprintPressed = false;
         }
-#else
-        if (event.type == SDL_KEYDOWN) keyDown(event.key.keysym.sym);
-        else if (event.type == SDL_KEYUP) keyUp(event.key.keysym.sym);
-        else if (event.type == SDL_MOUSEMOTION && windowGrab)
-            camera->aim(mouseSpeed * static_cast<double>(event.motion.xrel), -mouseSpeed * static_cast<double>(event.motion.yrel));
-#endif
     }
 
     if (runLevel < 1 || !camera) return;
 
-#if SDL_MAJOR_VERSION >= 3
     int keyCount = 0;
     const bool* keys = SDL_GetKeyboardState(&keyCount);
     const bool pollForward = keys && ((keyCount > SDL_SCANCODE_W && keys[SDL_SCANCODE_W]) || (keyCount > SDL_SCANCODE_UP && keys[SDL_SCANCODE_UP]));
@@ -636,14 +595,6 @@ void MyGLApp::update(const FrameContext& frameContext)
     const bool pollRight = keys && ((keyCount > SDL_SCANCODE_D && keys[SDL_SCANCODE_D]) || (keyCount > SDL_SCANCODE_RIGHT && keys[SDL_SCANCODE_RIGHT]));
     const bool pollLeft = keys && ((keyCount > SDL_SCANCODE_A && keys[SDL_SCANCODE_A]) || (keyCount > SDL_SCANCODE_LEFT && keys[SDL_SCANCODE_LEFT]));
     const bool pollSprint = keys && (keyCount > SDL_SCANCODE_LSHIFT && keys[SDL_SCANCODE_LSHIFT]);
-#else
-    const Uint8* keys = SDL_GetKeyboardState(nullptr);
-    const bool pollForward = keys && (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP]);
-    const bool pollBackward = keys && (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN]);
-    const bool pollRight = keys && (keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_RIGHT]);
-    const bool pollLeft = keys && (keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_LEFT]);
-    const bool pollSprint = keys && keys[SDL_SCANCODE_LSHIFT];
-#endif
 
     const bool moveForwardActive = moveForwardPressed || pollForward;
     const bool moveBackwardActive = moveBackwardPressed || pollBackward;
@@ -653,19 +604,11 @@ void MyGLApp::update(const FrameContext& frameContext)
 
     if (windowGrab)
     {
-#if SDL_MAJOR_VERSION >= 3
         float relX = 0.0f;
         float relY = 0.0f;
         SDL_GetRelativeMouseState(&relX, &relY);
         if (relX != 0.0f || relY != 0.0f)
             camera->aim(mouseSpeed * static_cast<double>(relX), -mouseSpeed * static_cast<double>(relY));
-#else
-        int relX = 0;
-        int relY = 0;
-        SDL_GetRelativeMouseState(&relX, &relY);
-        if (relX != 0 || relY != 0)
-            camera->aim(mouseSpeed * static_cast<double>(relX), -mouseSpeed * static_cast<double>(relY));
-#endif
     }
 
     // Convert to seconds so movement speed is stable across different frame rates.
@@ -714,24 +657,38 @@ void MyGLApp::start()
 
         camera->update();
 
-        if (!sceneFinishedLoading && sceneLoaded)
+        if (!sceneFinishedLoading && sceneLoaded.load(std::memory_order_acquire))
         {
             if (!renderer->sceneNodes.empty())
             {
-                glm::vec3 center(0.0f);
-                float radius = 0.0f;
+                glm::vec3 minP(std::numeric_limits<float>::max());
+                glm::vec3 maxP(std::numeric_limits<float>::lowest());
                 for (const auto& node : renderer->sceneNodes)
                 {
                     const glm::vec3 c(node.lx, node.ly, node.lz);
-                    center += c;
+                    minP = glm::min(minP, c);
+                    maxP = glm::max(maxP, c);
                 }
-                center /= static_cast<float>(renderer->sceneNodes.size());
+
+                glm::vec3 center = (minP + maxP) * 0.5f;
+                float radius = glm::length(maxP - center);
 
                 for (const auto& node : renderer->sceneNodes)
                 {
                     const glm::vec3 c(node.lx, node.ly, node.lz);
-                    const float d = glm::length(c - center) + node.boundingSphere;
-                    if (d > radius) radius = d;
+                    const float nodeExtent = node.boundingSphere;
+                    const float distToCenter = glm::length(c - center);
+                    const float outside = distToCenter + nodeExtent;
+                    if (outside > radius)
+                    {
+                        const float newRadius = 0.5f * (radius + outside);
+                        const float shift = (outside - newRadius);
+                        if (distToCenter > 1e-6f)
+                        {
+                            center += ((c - center) / distToCenter) * shift;
+                        }
+                        radius = newRadius;
+                    }
                 }
                 if (radius < 1.0f) radius = 1.0f;
 
@@ -795,7 +752,7 @@ void MyGLApp::start()
                 {
                     const Renderer::PerfStats& stats = renderer->getPerfStats();
                     char titleBuffer[256];
-                    (void)sprintf_s(titleBuffer, sizeof(titleBuffer),
+                    std::snprintf(titleBuffer, sizeof(titleBuffer),
                         "%s | FPS %.1f | CPU %.2fms | Shadow %.2fms | Draw %d | Visible %d/%d | FrustumCull %d | OccCull %d",
                         baseTitle.c_str(), stats.fps, stats.cpuFrameMs, stats.shadowPassMs,
                         stats.drawCalls, stats.visibleNodes, stats.totalNodes,

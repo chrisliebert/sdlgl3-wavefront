@@ -5,12 +5,19 @@
 #include <string_view>
 #include <map>
 #include <iostream>
+#include <unordered_set>
+#include <mutex>
 
 class ConfigLoader
 {
 protected:
     std::string filename;
     std::map<std::string, std::string> vars;
+    bool warnMissingKeys = false;
+    mutable std::unordered_set<std::string> missingKeyWarnings;
+    mutable std::mutex warningMutex;
+
+    void warnMissingOnce(std::string_view key) const;
 public:
     // Load a .cfg file
     explicit ConfigLoader(std::string_view configPath);

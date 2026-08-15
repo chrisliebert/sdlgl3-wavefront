@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 #include <array>
+#include <string>
 
 class Renderer;
 class ConfigLoader;
@@ -67,6 +68,16 @@ private:
     std::unique_ptr<GpuProgram> shadowProgram;
     int shadowWidthW = 2048;
     int shadowHeightH = 2048;
+    bool verboseLogging = false;
+    bool cullFaceEnabled = false;
+    std::string depthVertShaderPath;
+    std::string depthFragShaderPath;
+    std::string mainVertShaderPath;
+    std::string mainFragShaderPath;
+    float clearR = 1.0f;
+    float clearG = 0.8f;
+    float clearB = 0.8f;
+    float clearA = 1.0f;
 
     // Helper to get config
     ConfigLoader& getConfig();

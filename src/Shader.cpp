@@ -2,6 +2,34 @@
 #include <utility>
 #include <algorithm>
 
+namespace {
+std::string readTextFileExact(std::string_view path)
+{
+    std::ifstream fileStream(std::string(path), std::ios::binary);
+    if (!fileStream.is_open())
+    {
+        return {};
+    }
+
+    fileStream.seekg(0, std::ios::end);
+    const std::streamoff size = fileStream.tellg();
+    fileStream.seekg(0, std::ios::beg);
+
+    if (size <= 0)
+    {
+        return {};
+    }
+
+    std::string contents(static_cast<std::size_t>(size), '\0');
+    fileStream.read(contents.data(), size);
+    if (!fileStream)
+    {
+        return {};
+    }
+    return contents;
+}
+}
+
 // ============================================================================
 // ShaderCache Implementation (Fix #7.5)
 // ============================================================================
@@ -51,21 +79,12 @@ std::shared_ptr<Shader> ShaderCache::compileAndCache(std::string_view filePath)
     const std::string pathStr(filePath);
     
     // Read source file
-    std::string sourceCode;
-    std::ifstream fileStream(pathStr.c_str());
-    if (!fileStream.is_open())
+    std::string sourceCode = readTextFileExact(pathStr);
+    if (sourceCode.empty())
     {
         std::cerr << "Unable to load shader: " << pathStr << std::endl;
         return nullptr;
     }
-    
-    std::string line;
-    while (std::getline(fileStream, line))
-    {
-        sourceCode += line;
-        sourceCode += "\n";
-    }
-    fileStream.close();
     
     // Determine shader type from file extension
     const std::filesystem::path path(pathStr);
@@ -164,18 +183,8 @@ void Shader::load(std::string_view _filePath)
 {
     shaderSrc.clear();
     filePath.assign(_filePath);
-    std::ifstream fileStream(filePath.c_str());
-    if (fileStream.is_open())
-    {
-        std::string line;
-        while (std::getline(fileStream, line))
-        {
-            shaderSrc += line;
-            shaderSrc += "\n";
-        }
-        fileStream.close();
-    }
-    else
+    shaderSrc = readTextFileExact(filePath);
+    if (shaderSrc.empty())
     {
         std::cerr << "Unable to load shader source: " << filePath << std::endl;
     }

@@ -44,10 +44,32 @@ ConfigLoader::ConfigLoader(std::string_view configPath)
             }
         }
         fileStream.close();
+
+        auto it = vars.find("config.warnMissingKeys");
+        if (it != vars.end())
+        {
+            const std::string& flag = it->second;
+            warnMissingKeys = (flag == "true" || flag == "True" || flag == "1");
+        }
     }
     else
     {
         std::cerr << "Unable to load config: " << filePath << std::endl;
+    }
+}
+
+void ConfigLoader::warnMissingOnce(std::string_view key) const
+{
+    if (!warnMissingKeys)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(warningMutex);
+    const std::string keyStr(key);
+    if (missingKeyWarnings.insert(keyStr).second)
+    {
+        std::cerr << "Missing config key '" << keyStr << "' in " << filename << std::endl;
     }
 }
 
@@ -57,6 +79,7 @@ bool ConfigLoader::getBool(std::string_view key) const
     auto it = vars.find(keyStr);
     if (it == vars.end())
     {
+        warnMissingOnce(key);
         return false;
     }
     
@@ -65,9 +88,10 @@ bool ConfigLoader::getBool(std::string_view key) const
     if (s == "false" || s == "False" || s == "0") return false;
     
     std::stringstream ss(s);
-    bool val;
-    if (ss >> val && ss.fail()) {
+    bool val = false;
+    if (!(ss >> std::boolalpha >> val)) {
         std::cerr << "Unable to parse variable " << key << " of " << s << " as bool." << std::endl;
+        return false;
     }
     return val;
 }
@@ -78,6 +102,7 @@ int ConfigLoader::getInt(std::string_view key) const
     auto it = vars.find(keyStr);
     if (it == vars.end())
     {
+        warnMissingOnce(key);
         return 0;
     }
     
@@ -96,6 +121,7 @@ float ConfigLoader::getFloat(std::string_view key) const
     auto it = vars.find(keyStr);
     if (it == vars.end())
     {
+        warnMissingOnce(key);
         return 0.0f;
     }
     
@@ -116,6 +142,7 @@ std::string_view ConfigLoader::getVar(std::string_view key) const
     auto it = vars.find(keyStr);
     if (it == vars.end())
     {
+        warnMissingOnce(key);
         return emptyStr;
     }
     return it->second;

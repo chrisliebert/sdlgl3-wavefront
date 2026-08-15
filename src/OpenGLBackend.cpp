@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/transform.hpp>
 
@@ -30,6 +31,16 @@ OpenGLBackend::OpenGLBackend(Renderer& renderer)
 {
     const auto& cfg = getConfig();
     usePersistentMappedVbo = cfg.hasVar("renderer.vbo.persistent") ? cfg.getBool("renderer.vbo.persistent") : false;
+    verboseLogging = cfg.hasVar("renderer.verbose") ? cfg.getBool("renderer.verbose") : false;
+    cullFaceEnabled = cfg.hasVar("cullFace") ? cfg.getBool("cullFace") : false;
+    clearR = cfg.hasVar("renderer.clearColor.r") ? cfg.getFloat("renderer.clearColor.r") : 1.0f;
+    clearG = cfg.hasVar("renderer.clearColor.g") ? cfg.getFloat("renderer.clearColor.g") : 0.8f;
+    clearB = cfg.hasVar("renderer.clearColor.b") ? cfg.getFloat("renderer.clearColor.b") : 0.8f;
+    clearA = cfg.hasVar("renderer.clearColor.a") ? cfg.getFloat("renderer.clearColor.a") : 1.0f;
+    depthVertShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(cfg.getVar("shader.depth.vert"))).string();
+    depthFragShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(cfg.getVar("shader.depth.frag"))).string();
+    mainVertShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(cfg.getVar("shader.vert"))).string();
+    mainFragShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(cfg.getVar("shader.frag"))).string();
     
     shadowWidthW = cfg.getInt("shadow.width");
     shadowHeightH = cfg.getInt("shadow.height");
@@ -49,12 +60,10 @@ bool OpenGLBackend::initialize(SDL_Window* w)
     window = w;
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
-    
-    const auto& cfg = getConfig();
-    if (cfg.getBool("cullFace")) glEnable(GL_CULL_FACE);
-    else glDisable(GL_CULL_FACE);
-    
-    glClearColor(1.0f, 0.8f, 0.8f, 1.0f);
+
+    glDisable(GL_CULL_FACE);
+
+    glClearColor(clearR, clearG, clearB, clearA);
     return true;
 }
 
@@ -101,6 +110,13 @@ void OpenGLBackend::beginFrame(const FrameContext& frameContext)
 void OpenGLBackend::submit(const std::vector<RenderCommand>& commands)
 {
     if (owner.sceneNodes.empty()) return;
+
+    GLint prevVao = 0;
+    GLint prevArrayBuffer = 0;
+    GLint prevElementArrayBuffer = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevArrayBuffer);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElementArrayBuffer);
 
     glBindVertexArray(vao);
     glEnableVertexAttribArray(0);
@@ -181,12 +197,12 @@ void OpenGLBackend::submit(const std::vector<RenderCommand>& commands)
         }
     }
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(prevElementArrayBuffer));
+    glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(prevArrayBuffer));
     glDisableVertexAttribArray(0);
     glDisableVertexAttribArray(1);
     glDisableVertexAttribArray(2);
-    glBindVertexArray(0);
+    glBindVertexArray(static_cast<GLuint>(prevVao));
 }
 
 void OpenGLBackend::endFrame()
@@ -200,8 +216,7 @@ void OpenGLBackend::endFrame()
 
 bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename*/, bool /*loadCachedScene*/)
 {
-    const auto& cfg = getConfig();
-    if (cfg.getBool("renderer.verbose")) std::cout << "Buffering to GPU" << std::endl;
+    if (verboseLogging) std::cout << "Buffering to GPU" << std::endl;
 
     // Load textures for scene nodes
     for (size_t i = 0; i < owner.sceneNodes.size(); ++i)
@@ -214,7 +229,7 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
         }
         else if (std::strlen(matIt->second.diffuseTexName) > 0)
         {
-            if (cfg.getBool("renderer.verbose"))
+            if (verboseLogging)
             {
                 std::cout << "Texture stage [" << i << "] diffuse: " << matIt->second.diffuseTexName << std::endl;
             }
@@ -223,7 +238,7 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
 
         if (matIt != owner.materials.end() && std::strlen(matIt->second.normalTexName) > 0)
         {
-            if (cfg.getBool("renderer.verbose"))
+            if (verboseLogging)
             {
                 std::cout << "Texture stage [" << i << "] normal: " << matIt->second.normalTexName << std::endl;
             }
@@ -232,7 +247,7 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
 
         if (matIt != owner.materials.end() && std::strlen(matIt->second.specularTexName) > 0)
         {
-            if (cfg.getBool("renderer.verbose"))
+            if (verboseLogging)
             {
                 std::cout << "Texture stage [" << i << "] specular: " << matIt->second.specularTexName << std::endl;
             }
@@ -240,7 +255,7 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
         }
     }
 
-    if (cfg.getBool("renderer.verbose")) std::cout << "Texture stage complete" << std::endl;
+    if (verboseLogging) std::cout << "Texture stage complete" << std::endl;
 
     checkForGLError();
 
@@ -267,15 +282,39 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
         }
         else
         {
-            // Fallback to invalidate-and-replace approach
-            glBufferData(GL_ARRAY_BUFFER, vertexBytes, owner.vertexData.data(), GL_DYNAMIC_DRAW);
+            // Fallback path: explicit map/flush/unmap for deterministic visibility.
+            glBufferData(GL_ARRAY_BUFFER, vertexBytes, nullptr, GL_DYNAMIC_DRAW);
+            void* mapped = glMapBufferRange(GL_ARRAY_BUFFER, 0, vertexBytes,
+                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_FLUSH_EXPLICIT_BIT);
+            if (mapped)
+            {
+                std::memcpy(mapped, owner.vertexData.data(), vertexBytes);
+                glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, vertexBytes);
+                glUnmapBuffer(GL_ARRAY_BUFFER);
+            }
+            else
+            {
+                glBufferSubData(GL_ARRAY_BUFFER, 0, vertexBytes, owner.vertexData.data());
+            }
             persistentVboActive = false;
         }
     }
     else
     {
-        // Double-buffered approach for OpenGL 3.0+
-        glBufferData(GL_ARRAY_BUFFER, vertexBytes, owner.vertexData.data(), GL_DYNAMIC_DRAW);
+        // Non-persistent fallback with explicit flush where available.
+        glBufferData(GL_ARRAY_BUFFER, vertexBytes, nullptr, GL_DYNAMIC_DRAW);
+        void* mapped = glMapBufferRange(GL_ARRAY_BUFFER, 0, vertexBytes,
+            GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_FLUSH_EXPLICIT_BIT);
+        if (mapped)
+        {
+            std::memcpy(mapped, owner.vertexData.data(), vertexBytes);
+            glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, vertexBytes);
+            glUnmapBuffer(GL_ARRAY_BUFFER);
+        }
+        else
+        {
+            glBufferSubData(GL_ARRAY_BUFFER, 0, vertexBytes, owner.vertexData.data());
+        }
         persistentVboActive = false;
     }
 
@@ -296,38 +335,43 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
                  owner.indices.data(), GL_STATIC_DRAW);
     checkForGLError();
 
-    if (cfg.getBool("renderer.verbose")) std::cout << "buffered geometry" << std::endl;
+    if (verboseLogging) std::cout << "buffered geometry" << std::endl;
 
     glEnable(GL_DEPTH_TEST);
 
-    // Create shader programs with caching support
-    gpuProgram = std::make_unique<GpuProgram>();
-    shadowProgram = std::make_unique<GpuProgram>();
+    // Create shader programs once; repeated bufferToGpu calls should not recompile/link.
+    if (!gpuProgram || !shadowProgram)
+    {
+        gpuProgram = std::make_unique<GpuProgram>();
+        shadowProgram = std::make_unique<GpuProgram>();
 
-    // Load shadow shaders
-    std::string shadowVertPath;
-    std::string shadowFragPath;
-    { const std::string _sd(SHADER_DIRECTORY); const std::string _ds(DIRECTORY_SEPARATOR); const std::string _sv(cfg.getVar("shader.depth.vert")); shadowVertPath = _sd + _ds + _sv; }
-    { const std::string _sd(SHADER_DIRECTORY); const std::string _ds(DIRECTORY_SEPARATOR); const std::string _sf(cfg.getVar("shader.depth.frag")); shadowFragPath = _sd + _ds + _sf; }
-    
-    VertexShader shadowVert(shadowVertPath);
-    FragmentShader shadowFrag(shadowFragPath);
-    shadowProgram->attachShader(shadowVert);
-    shadowProgram->attachShader(shadowFrag);
-    glLinkProgram(shadowProgram->getId());
+        // Load shadow shaders through ShaderCache.
+        auto shadowVert = VertexShader::createFromCache(depthVertShaderPath);
+        auto shadowFrag = FragmentShader::createFromCache(depthFragShaderPath);
+        if (!shadowVert || !shadowFrag)
+        {
+            std::cerr << "Failed to load cached shadow shaders" << std::endl;
+            return false;
+        }
+        shadowProgram->attachShader(*shadowVert);
+        shadowProgram->attachShader(*shadowFrag);
+        glLinkProgram(shadowProgram->getId());
 
-    // Load main shaders
-    std::string vertPath(std::string(SHADER_DIRECTORY) + std::string(DIRECTORY_SEPARATOR) + std::string(cfg.getVar("shader.vert")));
-    std::string fragPath(std::string(SHADER_DIRECTORY) + std::string(DIRECTORY_SEPARATOR) + std::string(cfg.getVar("shader.frag")));
-    
-    VertexShader vertShader(vertPath);
-    FragmentShader fragShader(fragPath);
-    gpuProgram->attachShader(vertShader);
-    gpuProgram->attachShader(fragShader);
-    glLinkProgram(gpuProgram->getId());
+        // Load main shaders through ShaderCache.
+        auto vertShader = VertexShader::createFromCache(mainVertShaderPath);
+        auto fragShader = FragmentShader::createFromCache(mainFragShaderPath);
+        if (!vertShader || !fragShader)
+        {
+            std::cerr << "Failed to load cached main shaders" << std::endl;
+            return false;
+        }
+        gpuProgram->attachShader(*vertShader);
+        gpuProgram->attachShader(*fragShader);
+        glLinkProgram(gpuProgram->getId());
 
-    _checkForGLSLError(gpuProgram->getId());
-    _checkForGLSLError(shadowProgram->getId());
+        _checkForGLSLError(gpuProgram->getId());
+        _checkForGLSLError(shadowProgram->getId());
+    }
 
     glBindVertexArray(0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
@@ -343,9 +387,9 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
     // Fix: Use consistent light position matching Renderer::render() (was 0,100,0, now 10,50,0)
     const glm::vec3 lightPos = camera.position + Math::getLightPositionOffset();
     const glm::mat4 lightProjection = glm::ortho(
-        cfg.getFloat("shadow.ortho.left"), cfg.getFloat("shadow.ortho.right"),
-        cfg.getFloat("shadow.ortho.bottom"), cfg.getFloat("shadow.ortho.top"),
-        cfg.getFloat("shadow.ortho.near"), cfg.getFloat("shadow.ortho.far"));
+        getConfig().getFloat("shadow.ortho.left"), getConfig().getFloat("shadow.ortho.right"),
+        getConfig().getFloat("shadow.ortho.bottom"), getConfig().getFloat("shadow.ortho.top"),
+        getConfig().getFloat("shadow.ortho.near"), getConfig().getFloat("shadow.ortho.far"));
     const glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     const glm::mat4 lightSpaceMatrix = lightProjection * lightView;
     const glm::mat4 identityModel(1.0f);
@@ -425,6 +469,14 @@ GLuint OpenGLBackend::createShadowMap(Camera& camera)
     }
 
     GLint viewport[4];
+    GLint prevFbo = 0;
+    GLint prevVao = 0;
+    GLint prevArrayBuffer = 0;
+    GLint prevElementArrayBuffer = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevArrayBuffer);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElementArrayBuffer);
     glGetIntegerv(GL_VIEWPORT, viewport);
     glViewport(0, 0, shadowWidthW, shadowHeightH);
     glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
@@ -448,18 +500,18 @@ GLuint OpenGLBackend::createShadowMap(Camera& camera)
         const GLsizei count = static_cast<GLsizei>(node.endPosition - node.startPosition);
         if (count > 0)
         {
-            glDrawRangeElementsBaseVertex(node.primitiveMode, node.startPosition, node.endPosition,
-                count, GL_UNSIGNED_INT, reinterpret_cast<const void*>(0), static_cast<GLint>(node.startPosition));
+            glDrawElements(node.primitiveMode, count, GL_UNSIGNED_INT,
+                reinterpret_cast<const void*>(node.startPosition * sizeof(GLuint)));
         }
     }
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(prevElementArrayBuffer));
+    glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(prevArrayBuffer));
     glDisableVertexAttribArray(0);
     glDisableVertexAttribArray(1);
     glDisableVertexAttribArray(2);
-    glBindVertexArray(0);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindVertexArray(static_cast<GLuint>(prevVao));
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     glBindTexture(GL_TEXTURE_2D, shadowMap);
 
