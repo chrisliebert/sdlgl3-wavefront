@@ -143,167 +143,86 @@ This document tracks the remediation plan for issues identified in `doc/PHD_CRIT
 
 ---
 
-## Sprint-Sized Boards (E1/E2)
+---
 
-Effort legend: XS (0.5-1 day), S (1-2 days), M (2-4 days), L (4-7 days)
+## Proposed Sprint Plan with Concurrent Workstreams
 
-### E1 Boards: Vulkan + Auto-Selection
-
-- [ ] **Board E1.B01: Backend policy config and parser**
-	- Scope: Add `renderer.backend=auto|opengl|vulkan` parsing and validation in config flow.
-	- Estimate: XS (~6h)
-	- Depends on: none
-- [ ] **Board E1.B02: Runtime capability probe module**
-	- Scope: Add Vulkan capability probe using SDL Vulkan entry points and device/present checks.
-	- Estimate: M (~14h)
-	- Depends on: E1.B01
-- [ ] **Board E1.B03: Backend factory and startup split**
-	- Scope: Refactor startup into backend-agnostic bootstrap + backend-specific window/context creation.
-	- Estimate: M (~16h)
-	- Depends on: E1.B01, E1.B02
-- [ ] **Board E1.B04: Vulkan backend skeleton**
-	- Scope: Create `VulkanBackend` class implementing `IRenderBackend` with safe no-op/stub internals for unsupported features.
-	- Estimate: S (~10h)
-	- Depends on: E1.B03
-- [ ] **Board E1.B05: Vulkan geometry and texture upload MVP**
-	- Scope: Implement static mesh upload, descriptor setup, and indexed draw submission path.
-	- Estimate: L (~28h)
-	- Depends on: E1.B04
-- [ ] **Board E1.B06: Vulkan frame lifecycle and swapchain resilience**
-	- Scope: Handle acquire/present, resize recreation, and frame sync correctness.
-	- Estimate: L (~26h)
-	- Depends on: E1.B05
-- [ ] **Board E1.B07: Fallback semantics and error taxonomy**
-	- Scope: Add fallback reason codes and hard/soft failure behavior for `auto` and forced backend modes.
-	- Estimate: S (~8h)
-	- Depends on: E1.B03, E1.B06
-- [ ] **Board E1.B08: Telemetry, HUD stats, and validation scenarios**
-	- Scope: Report backend choice, probe timings, fallback reasons; run scenario matrix.
-	- Estimate: S (~8h)
-	- Depends on: E1.B07
-
-### E2 Boards: Atlas Cache + Rectangle Packing
-
-- [ ] **Board E2.B01: Cache vNext schema and chunk registry**
-	- Scope: Define binary schema with chunk table and version upgrade path.
-	- Estimate: M (~12h)
-	- Depends on: none
-- [ ] **Board E2.B02: Deterministic texture inventory and normalization**
-	- Scope: Build deterministic texture list and normalization rules (semantic + format + sampler class).
-	- Estimate: S (~8h)
-	- Depends on: E2.B01
-- [ ] **Board E2.B03: MaxRects packer implementation**
-	- Scope: Implement deterministic MaxRects (BSSF) with optional rotation and padding controls.
-	- Estimate: L (~24h)
-	- Depends on: E2.B02
-- [ ] **Board E2.B04: Skyline fallback path and guardrails**
-	- Scope: Add Skyline fallback for stress cases and define switch thresholds.
-	- Estimate: M (~12h)
-	- Depends on: E2.B03
-- [ ] **Board E2.B05: Atlas pixel compositor and edge dilation**
-	- Scope: Compose atlas pages, add gutters/padding, write UV remap metadata.
-	- Estimate: L (~22h)
-	- Depends on: E2.B03
-- [ ] **Board E2.B06: Runtime atlas loader integration**
-	- Scope: Load atlas chunks into runtime texture objects and remap material texture coordinates.
-	- Estimate: M (~16h)
-	- Depends on: E2.B01, E2.B05
-- [ ] **Board E2.B07: Legacy cache migration + corruption recovery**
-	- Scope: Read legacy cache safely, migrate to vNext, and rebuild on invalid atlas chunks.
-	- Estimate: S (~10h)
-	- Depends on: E2.B01, E2.B06
-- [ ] **Board E2.B08: Visual correctness and performance test harness**
-	- Scope: Add UV seam tests, determinism checks, occupancy stats, startup/bind KPI tracking.
-	- Estimate: M (~14h)
-	- Depends on: E2.B06, E2.B07
-
-### Cross-Epic Integration Boards
-
-- [ ] **Board X.B01: Backend-agnostic atlas binding contract**
-	- Scope: Define one material/atlas binding contract consumed by OpenGL and Vulkan paths.
-	- Estimate: S (~8h)
-	- Depends on: E1.B05, E2.B06
-- [ ] **Board X.B02: End-to-end soak + fallback stress tests**
-	- Scope: Run long-form startup/reload/fallback loops with atlas-enabled caches on both backends.
-	- Estimate: M (~14h)
-	- Depends on: E1.B08, E2.B08, X.B01
+This plan organizes the work from all epics into five sprints with parallel workstreams to accelerate development.
 
 ---
 
-- [ ] **Epic E3: Interactive Multi-Backend Renderer (Vulkan/OpenGL) with ImGui**
+### **Sprint 1: Foundations**
 
-	**Why this epic matters**
-	- Provides users with direct control over the rendering backend, allowing them to choose between performance (Vulkan) and compatibility (OpenGL).
-	- Introduces a flexible and extensible UI framework (ImGui) that can be used for future features like scene inspection, performance metrics, and graphics settings.
-	- Modernizes the rendering architecture to be modular and support multiple graphics APIs, a common feature in robust rendering engines.
+-   **Workstream: Core Rendering Backend**
+    -   [ ] **E1.B01: Backend policy config and parser**: Add `renderer.backend=auto|opengl|vulkan` parsing and validation in config flow.
+    -   [ ] **E1.B02: Runtime capability probe module**: Add Vulkan capability probe using SDL Vulkan entry points and device/present checks.
+    -   [ ] **E1.B03: Backend factory and startup split**: Refactor startup into backend-agnostic bootstrap + backend-specific window/context creation.
+-   **Workstream: Asset & Cache Pipeline**
+    -   [ ] **E2.B01: Cache vNext schema and chunk registry**: Define binary schema with chunk table and version upgrade path.
+    -   [ ] **E2.B02: Deterministic texture inventory and normalization**: Build deterministic texture list and normalization rules.
+-   **Workstream: UI & Interactivity**
+    -   [ ] **E4.1 ImGui Integration**: Add ImGui as a dependency and integrate its basic setup and rendering.
+-   **Workstream: AI & Debugging**
+    -   [ ] **E5.1 Core Capture System**: Implement mechanisms to capture essential rendering data in a backend-agnostic manner.
 
-	**Design decisions (researched + pragmatic)**
-	- The `IRenderBackend` interface will be the primary seam between the `Renderer` and the graphics API-specific code.
-	- A new `UIManager` class will be created to encapsulate all ImGui setup, rendering, and UI panel logic.
-	- Backend selection will be persisted in `config/app.cfg`. The default on first launch will be OpenGL, as it is the most stable and widely supported.
-	- Switching the renderer via the UI will require an application restart. The UI will clearly communicate this to the user and handle the config change.
-	- The Vulkan backend will be implemented using the official `Vulkan-Hpp` C++ bindings for improved safety and ergonomics.
-	- The OpenGL backend will target a modern Core Profile (e.g., 4.5) to align with desktop capabilities, rather than OpenGL ES, but the abstraction will allow for an ES backend in the future.
+---
 
-	**Milestones**
-	- [ ] **E3.1 Dependency Integration**: Add ImGui and Vulkan-Hpp as dependencies into the CMake build system. Ensure the Vulkan SDK is correctly located.
-	- [ ] **E3.2 Renderer Abstraction**: Refactor the existing `OpenGLBackend` to implement a new `IRenderBackend` interface, ensuring no loss of current functionality.
-	- [ ] **E3.3 UI Scaffolding**: Create a `UIManager` and integrate ImGui's lifecycle (initialization, new frame, rendering, shutdown) into the main application loop. Render a basic, empty settings window.
-	- [ ] **E3.4 Backend Switching Logic**: Implement the factory logic in `main.cpp` to instantiate the correct backend based on the value in `config/app.cfg`.
-	- [ ] **E3.5 UI-Config Interaction**: Build the UI panel with a dropdown to select "OpenGL" or "Vulkan". On change, this will update `app.cfg` and prompt the user to restart.
-	- [ ] **E3.6 Vulkan Backend MVP**: Implement a minimal `VulkanBackend` that can clear the screen to a solid color. This verifies the entire Vulkan initialization and swapchain pipeline.
-	- [ ] **E3.7 Vulkan Backend Feature Parity**: Extend the `VulkanBackend` to match the `OpenGLBackend`'s functionality (rendering static models, textures, shadows).
+### **Sprint 2: MVP Features**
 
-	**Acceptance criteria**
-	- [ ] The application starts and runs correctly using the existing OpenGL backend.
-	- [ ] A new "Settings" window can be opened, showing a dropdown for renderer selection.
-	- [ ] Selecting a new renderer in the UI and restarting the application causes the application to launch with the chosen backend.
-	- [ ] The Vulkan backend, when selected, renders the same scene content as the OpenGL backend.
-	- [ ] Both backends can be selected and run without crashes or visual artifacts.
+-   **Workstream: Core Rendering Backend**
+    -   [ ] **E1.B04: Vulkan backend skeleton**: Create `VulkanBackend` class implementing `IRenderBackend`.
+    -   [ ] **E1.B05: Vulkan geometry and texture upload MVP**: Implement static mesh upload, descriptor setup, and indexed draw submission.
+    -   [ ] **E4.4 OpenGL ES 3.2 Backend MVP**: Develop a minimal `OpenGLESBackend` that clears the screen.
+-   **Workstream: Asset & Cache Pipeline**
+    -   [ ] **E2.B03: MaxRects packer implementation**: Implement deterministic MaxRects (BSSF) with optional rotation and padding controls.
+-   **Workstream: UI & Interactivity**
+    -   [ ] **E4.2 Config Persistence**: Implement logic in `ConfigLoader` to read and write the `renderer.profile` setting.
+    -   [ ] **E4.3 Profile Selection UI**: Create an ImGui window for renderer profile selection.
+-   **Workstream: AI & Debugging**
+    -   [ ] **E5.2 MCP Integration**: Develop serialization/deserialization routines for captured rendering states.
+    -   [ ] **E5.3 Basic Replay Functionality**: Implement a system to replay captured rendering frames.
 
-	**Risks and mitigations**
-	- Risk: The effort to achieve feature parity in the Vulkan backend is significant.
-		Mitigation: Implement the Vulkan backend incrementally, starting with a simple clear screen (MVP) and building up features one by one, with clear "not yet implemented" markers for missing functionality.
-	- Risk: Complexity of managing two separate ImGui rendering backends.
-		Mitigation: Adapt the official ImGui OpenGL and Vulkan example backends, keeping the integration code isolated within the respective `OpenGLBackend` and `VulkanBackend` classes.
-	- Risk: System configuration issues finding the Vulkan SDK.
-		Mitigation: Provide clear instructions in `README.md` on how to install the Vulkan SDK and ensure CMake can find it. Add checks in CMake to provide helpful error messages.
+---
 
-## Dependency Graph (Critical Path)
+### **Sprint 3: Feature Expansion & Integration**
 
-```mermaid
-flowchart TD
-	E1B01[E1.B01 Config policy] --> E1B02[E1.B02 Vulkan probe]
-	E1B02 --> E1B03[E1.B03 Backend factory/startup split]
-	E1B03 --> E1B04[E1.B04 Vulkan skeleton]
-	E1B04 --> E1B05[E1.B05 Upload+draw MVP]
-	E1B05 --> E1B06[E1.B06 Frame lifecycle/swapchain]
-	E1B06 --> E1B07[E1.B07 Fallback semantics]
-	E1B07 --> E1B08[E1.B08 Telemetry+validation]
+-   **Workstream: Core Rendering Backend**
+    -   [ ] **E1.B06: Vulkan frame lifecycle and swapchain resilience**: Handle acquire/present, resize recreation, and frame sync correctness.
+    -   [ ] **E4.5 Vulkan 1.4 Backend MVP**: Extend the `VulkanBackend` to target Vulkan 1.4 features.
+-   **Workstream: Asset & Cache Pipeline**
+    -   [ ] **E2.B05: Atlas pixel compositor and edge dilation**: Compose atlas pages, add gutters/padding, write UV remap metadata.
+    -   [ ] **E2.B06: Runtime atlas loader integration**: Load atlas chunks into runtime texture objects and remap material texture coordinates.
+-   **Workstream: UI & Interactivity**
+    -   [ ] **E4.8 Model File Chooser**: Implement an ImGui file chooser dialog for runtime loading of `.obj` models.
+-   **Workstream: AI & Debugging**
+    -   [ ] **E5.4 ImGui Visualization Overlay**: Create an ImGui interface to browse captured frames and inspect rendering parameters.
 
-	E2B01[E2.B01 Cache vNext schema] --> E2B02[E2.B02 Texture normalization]
-	E2B02 --> E2B03[E2.B03 MaxRects]
-	E2B03 --> E2B04[E2.B04 Skyline fallback]
-	E2B03 --> E2B05[E2.B05 Atlas compositor]
-	E2B05 --> E2B06[E2.B06 Runtime atlas loader]
-	E2B01 --> E2B06
-	E2B06 --> E2B07[E2.B07 Migration/recovery]
-	E2B07 --> E2B08[E2.B08 Correctness+perf harness]
+---
 
-	E1B05 --> XB01[X.B01 Backend-agnostic atlas contract]
-	E2B06 --> XB01
-	E1B08 --> XB02[X.B02 E2E soak/fallback stress]
-	E2B08 --> XB02
-	XB01 --> XB02
-```
+### **Sprint 4: Hardening & Parity**
 
-## Suggested Sprint Packaging
+-   **Workstream: Core Rendering Backend**
+    -   [ ] **E1.B07: Fallback semantics and error taxonomy**: Add fallback reason codes and hard/soft failure behavior.
+    -   [ ] **E4.7 Full Feature Parity**: Bring all new backends (GLES 3.2, Vulkan 1.4) to feature parity with the existing OpenGL 4.5 capabilities.
+-   **Workstream: Asset & Cache Pipeline**
+    -   [ ] **E2.B07: Legacy cache migration + corruption recovery**: Read legacy cache safely, migrate to vNext, and rebuild on invalid atlas chunks.
+-   **Workstream: AI & Debugging**
+    -   [ ] **E5.5 Intermediate Render Target Viewer**: Add functionality to view the contents of intermediate render targets.
+    -   [ ] **E5.6 AI Data Export**: Implement a feature to export captured rendering data for AI analysis tools.
 
-- [ ] **Sprint 1 (Foundations)**: E1.B01, E1.B02, E1.B03, E2.B01
-- [ ] **Sprint 2 (MVP pipelines)**: E1.B04, E1.B05, E2.B02, E2.B03
-- [ ] **Sprint 3 (Hardening)**: E1.B06, E1.B07, E2.B04, E2.B05
-- [ ] **Sprint 4 (Integration and quality)**: E1.B08, E2.B06, E2.B07, X.B01
-- [ ] **Sprint 5 (Validation and soak)**: E2.B08, X.B02
+---
+
+### **Sprint 5: Validation & Advanced Features**
+
+-   **Workstream: Core Rendering Backend**
+    -   [ ] **E1.B08: Telemetry, HUD stats, and validation scenarios**: Report backend choice, probe timings, fallback reasons; run scenario matrix.
+-   **Workstream: Asset & Cache Pipeline**
+    -   [ ] **E2.B08: Visual correctness and performance test harness**: Add UV seam tests, determinism checks, and performance KPI tracking.
+-   **Workstream: AI & Debugging**
+    -   [ ] **E5.7 Automated Anomaly Detection (MVP)**: Develop a basic AI-powered system that can flag common rendering issues.
+-   **Workstream: Cross-Epic Integration**
+	-   [ ] **X.B01: Backend-agnostic atlas binding contract**: Define one material/atlas binding contract consumed by both OpenGL and Vulkan paths.
+    -   [ ] **X.B02: End-to-end soak + fallback stress tests**: Run long-form startup/reload/fallback loops with atlas-enabled caches on both backends.
 
 ---
 
