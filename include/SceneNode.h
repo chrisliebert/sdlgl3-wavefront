@@ -79,6 +79,11 @@ struct SceneNode {
         return static_cast<GLsizei>(endPosition - startPosition);
     }
 
+    void setDrawRange(GLuint baseIndex) {
+        startPosition = baseIndex;
+        endPosition = baseIndex + static_cast<GLuint>(vertexDataSize);
+    }
+
     /** Check if this node has valid geometry. */
     [[nodiscard]] bool hasGeometry() const {
         return vertexData != nullptr && vertexDataSize > 0;

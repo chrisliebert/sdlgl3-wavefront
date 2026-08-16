@@ -206,6 +206,20 @@ void testSceneNodeMatrixAssignment() {
     std::cout << "PASSED" << std::endl;
 }
 
+void testSceneNodeDrawRangeUpdate() {
+    std::cout << "  [TEST] SceneNode draw range bookkeeping... ";
+
+    SceneNode node;
+    node.vertexDataSize = 5;
+    node.setDrawRange(12);
+
+    assert(node.startPosition == 12);
+    assert(node.endPosition == 17);
+    assert(node.vertexCount() == 5);
+
+    std::cout << "PASSED" << std::endl;
+}
+
 // ============================================================================
 // Test runner
 // ============================================================================
@@ -223,6 +237,7 @@ int runSceneNodeTests() {
     testSceneNodePrimitiveModeChange();
     testSceneNodeVertexData();
     testSceneNodeMatrixAssignment();
+    testSceneNodeDrawRangeUpdate();
     
     std::cout << "All SceneNode tests PASSED!" << std::endl;
     return 0;

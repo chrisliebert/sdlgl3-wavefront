@@ -230,6 +230,45 @@ Effort legend: XS (0.5-1 day), S (1-2 days), M (2-4 days), L (4-7 days)
 
 ---
 
+- [ ] **Epic E3: Interactive Multi-Backend Renderer (Vulkan/OpenGL) with ImGui**
+
+	**Why this epic matters**
+	- Provides users with direct control over the rendering backend, allowing them to choose between performance (Vulkan) and compatibility (OpenGL).
+	- Introduces a flexible and extensible UI framework (ImGui) that can be used for future features like scene inspection, performance metrics, and graphics settings.
+	- Modernizes the rendering architecture to be modular and support multiple graphics APIs, a common feature in robust rendering engines.
+
+	**Design decisions (researched + pragmatic)**
+	- The `IRenderBackend` interface will be the primary seam between the `Renderer` and the graphics API-specific code.
+	- A new `UIManager` class will be created to encapsulate all ImGui setup, rendering, and UI panel logic.
+	- Backend selection will be persisted in `config/app.cfg`. The default on first launch will be OpenGL, as it is the most stable and widely supported.
+	- Switching the renderer via the UI will require an application restart. The UI will clearly communicate this to the user and handle the config change.
+	- The Vulkan backend will be implemented using the official `Vulkan-Hpp` C++ bindings for improved safety and ergonomics.
+	- The OpenGL backend will target a modern Core Profile (e.g., 4.5) to align with desktop capabilities, rather than OpenGL ES, but the abstraction will allow for an ES backend in the future.
+
+	**Milestones**
+	- [ ] **E3.1 Dependency Integration**: Add ImGui and Vulkan-Hpp as dependencies into the CMake build system. Ensure the Vulkan SDK is correctly located.
+	- [ ] **E3.2 Renderer Abstraction**: Refactor the existing `OpenGLBackend` to implement a new `IRenderBackend` interface, ensuring no loss of current functionality.
+	- [ ] **E3.3 UI Scaffolding**: Create a `UIManager` and integrate ImGui's lifecycle (initialization, new frame, rendering, shutdown) into the main application loop. Render a basic, empty settings window.
+	- [ ] **E3.4 Backend Switching Logic**: Implement the factory logic in `main.cpp` to instantiate the correct backend based on the value in `config/app.cfg`.
+	- [ ] **E3.5 UI-Config Interaction**: Build the UI panel with a dropdown to select "OpenGL" or "Vulkan". On change, this will update `app.cfg` and prompt the user to restart.
+	- [ ] **E3.6 Vulkan Backend MVP**: Implement a minimal `VulkanBackend` that can clear the screen to a solid color. This verifies the entire Vulkan initialization and swapchain pipeline.
+	- [ ] **E3.7 Vulkan Backend Feature Parity**: Extend the `VulkanBackend` to match the `OpenGLBackend`'s functionality (rendering static models, textures, shadows).
+
+	**Acceptance criteria**
+	- [ ] The application starts and runs correctly using the existing OpenGL backend.
+	- [ ] A new "Settings" window can be opened, showing a dropdown for renderer selection.
+	- [ ] Selecting a new renderer in the UI and restarting the application causes the application to launch with the chosen backend.
+	- [ ] The Vulkan backend, when selected, renders the same scene content as the OpenGL backend.
+	- [ ] Both backends can be selected and run without crashes or visual artifacts.
+
+	**Risks and mitigations**
+	- Risk: The effort to achieve feature parity in the Vulkan backend is significant.
+		Mitigation: Implement the Vulkan backend incrementally, starting with a simple clear screen (MVP) and building up features one by one, with clear "not yet implemented" markers for missing functionality.
+	- Risk: Complexity of managing two separate ImGui rendering backends.
+		Mitigation: Adapt the official ImGui OpenGL and Vulkan example backends, keeping the integration code isolated within the respective `OpenGLBackend` and `VulkanBackend` classes.
+	- Risk: System configuration issues finding the Vulkan SDK.
+		Mitigation: Provide clear instructions in `README.md` on how to install the Vulkan SDK and ensure CMake can find it. Add checks in CMake to provide helpful error messages.
+
 ## Dependency Graph (Critical Path)
 
 ```mermaid
@@ -265,3 +304,89 @@ flowchart TD
 - [ ] **Sprint 3 (Hardening)**: E1.B06, E1.B07, E2.B04, E2.B05
 - [ ] **Sprint 4 (Integration and quality)**: E1.B08, E2.B06, E2.B07, X.B01
 - [ ] **Sprint 5 (Validation and soak)**: E2.B08, X.B02
+
+---
+
+## Epic E4: Multi-API Rendering with ImGui and Persistence
+
+	**Why this epic matters**
+	- Expands rendering compatibility to modern mobile platforms (OpenGL ES 3.2) and the very latest desktop/workstation APIs (Vulkan 1.4).
+	- Provides a user-friendly way (ImGui) to select the desired rendering profile at startup, catering to different hardware capabilities and developer preferences.
+	- Persists the user's choice, improving the user experience by remembering the preferred rendering setup.
+
+	**Design decisions (researched + pragmatic)**
+	- The existing `IRenderBackend` interface will be extended to accommodate specific features of OpenGL ES 3.2 and Vulkan 1.4, ensuring a unified interface for the `Renderer`.
+	- ImGui will be integrated to present a startup dialog allowing the user to select between "OpenGL ES 3.2", "Vulkan 1.4", and "OpenGL 4.5" (desktop GL).
+	- The selected rendering profile will be saved to `config/app.cfg` (e.g., `renderer.profile = gles32|vulkan14|gl45`).
+	- The application will load the saved preference on subsequent launches. If no preference is found, it will default to OpenGL ES 3.2 (for broad mobile compatibility) or automatically detect the best available.
+	- Switching profiles via the UI will require an application restart. The UI will clearly communicate this.
+	- For the model loading UI, a simple file chooser dialog will be implemented, potentially using a lightweight, single-header library like `ImGuiFileDialog`.
+
+	**Milestones**
+	- [ ] **E4.1 ImGui Integration**: Add ImGui as a dependency and integrate its basic setup and rendering into the application's main loop, suitable for a startup dialog.
+	- [ ] **E4.2 Config Persistence**: Implement logic in `ConfigLoader` to read and write the `renderer.profile` setting to `config/app.cfg`.
+	- [ ] **E4.3 Profile Selection UI**: Create an ImGui window that appears at startup, allowing the user to choose their preferred rendering profile (OpenGL ES 3.2, Vulkan 1.4, OpenGL 4.5).
+	- [ ] **E4.4 OpenGL ES 3.2 Backend MVP**: Develop a minimal `OpenGLESBackend` that clears the screen, integrating with `IRenderBackend`.
+	- [ ] **E4.5 Vulkan 1.4 Backend MVP**: Extend the existing `VulkanBackend` (or create a new one if necessary) to specifically target Vulkan 1.4 features and integrate with `IRenderBackend`.
+	- [ ] **E4.6 Startup Orchestration**: Modify `main.cpp` to initialize the correct backend based on the loaded or selected `renderer.profile`, handling fallback gracefully if a chosen API is unavailable.
+	- [ ] **E4.7 Full Feature Parity**: Bring all new backends (OpenGL ES 3.2, Vulkan 1.4) to feature parity with the existing OpenGL 4.5 capabilities (model loading, textures, shadows, etc.).
+	- [ ] **E4.8 Model File Chooser**: Implement an ImGui file chooser dialog to allow runtime loading of different `.obj` models from the filesystem.
+
+	**Acceptance criteria**
+	- [ ] At first launch, the application presents an ImGui dialog for renderer selection.
+	- [ ] The chosen profile is saved and loaded correctly on subsequent application launches.
+	- [ ] The application can successfully initialize and render a basic scene using OpenGL ES 3.2, Vulkan 1.4, and OpenGL 4.5.
+	- [ ] Switching between rendering profiles via the UI and restarting the application works as expected, leading to the chosen backend being active.
+	- [ ] A user can open a file dialog from the UI, select a new `.obj` model, and see it loaded and rendered in the scene.
+	- [ ] No visual regressions or crashes occur when running with any of the supported rendering profiles.
+
+	**Risks and mitigations**
+	- Risk: Significant divergence in shader language (GLSL ES for GLES, SPIR-V for Vulkan, GLSL for desktop GL).
+		Mitigation: Implement a robust shader asset pipeline that can compile/transpile shaders to the appropriate format for each backend.
+	- Risk: Managing context creation and API-specific states for three different graphics APIs can be complex.
+		Mitigation: Encapsulate API-specific logic entirely within their respective `IRenderBackend` implementations, minimizing cross-API dependencies and centralizing state management.
+	- Risk: Ensuring cross-platform build system compatibility for all dependencies (ImGui, Vulkan SDK, SDL3) across different OS and compilers.
+		Mitigation: Rigorous CMake scripting and testing on target platforms early in the development cycle.
+
+---
+
+## Epic E5: MCP-Powered End-to-End Rendering Debug Framework
+
+	**Why this epic matters**
+	- Enables efficient debugging of complex rendering pipelines, especially critical for AI-optimized development where rendering decisions might be opaque.
+	- Provides an end-to-end view of the rendering process, from asset loading to final pixel output, facilitating quick identification and resolution of rendering anomalies.
+	- Integrates with the MCP (Model Capture and Playback) system to capture and replay rendering states, allowing for deterministic debugging and analysis by AI systems.
+	- Accelerates AI-driven rendering research and development by providing rich, actionable debugging data and automated anomaly detection capabilities.
+
+	**Design decisions (researched + pragmatic)**
+	- The framework will capture key rendering states and data at various stages of the pipeline (e.g., input geometry, shader parameters, texture bindings, render target contents).
+	- Integration with MCP will allow for the serialization and deserialization of these captured states for replay and analysis.
+	- A custom ImGui-based overlay will visualize captured data, allowing developers to inspect rendering parameters, view intermediate render targets, and identify rendering issues interactively.
+	- AI optimization tools will leverage the captured data to analyze rendering performance, detect visual artifacts, and suggest optimizations.
+	- The framework will support all render backends (OpenGL, OpenGL ES, Vulkan) by abstracting rendering commands and states into a common format.
+
+	**Milestones**
+	- [ ] **E5.1 Core Capture System**: Implement mechanisms to capture essential rendering data (vertex buffers, index buffers, shader programs, uniform buffers, textures, framebuffers) in a backend-agnostic manner.
+	- [ ] **E5.2 MCP Integration**: Develop serialization/deserialization routines to store and retrieve captured rendering states using the MCP system.
+	- [ ] **E5.3 Basic Replay Functionality**: Implement a system to replay captured rendering frames, ensuring visual fidelity with the original rendering.
+	- [ ] **E5.4 ImGui Visualization Overlay**: Create an ImGui interface to browse captured frames, inspect rendering parameters (e.g., active shader, bound textures, uniform values), and toggle rendering stages.
+	- [ ] **E5.5 Intermediate Render Target Viewer**: Add functionality to view the contents of intermediate render targets (e.g., depth maps, G-buffers, shadow maps) within the ImGui overlay.
+	- [ ] **E5.6 AI Data Export**: Implement a feature to export captured rendering data in a structured format suitable for consumption by AI analysis tools (e.g., JSON, Protocol Buffers).
+	- [ ] **E5.7 Automated Anomaly Detection (MVP)**: Develop a basic AI-powered system that can flag common rendering issues (e.g., NaN colors, black pixels, depth fighting) based on exported data.
+
+	**Acceptance criteria**
+	- [ ] The debug framework can capture and replay rendering frames correctly across all supported backends.
+	- [ ] Developers can use the ImGui overlay to inspect any captured rendering state and intermediate render target.
+	- [ ] Captured rendering data can be successfully exported and consumed by external AI analysis tools.
+	- [ ] The automated anomaly detection system can identify and report at least two distinct rendering issues.
+	- [ ] The framework introduces minimal performance overhead when not actively capturing or debugging.
+
+	**Risks and mitigations**
+	- Risk: Performance overhead of capturing extensive rendering state.
+		Mitigation: Implement selective capture based on debug flags and granular control over what data is recorded. Optimize capture mechanisms for minimal CPU/GPU impact.
+	- Risk: Complexity of abstracting and capturing state for multiple graphics APIs.
+		Mitigation: Focus on common rendering concepts first, incrementally adding API-specific details. Leverage existing rendering abstraction (`IRenderBackend`) where possible.
+	- Risk: Data volume for end-to-end rendering captures could be very large.
+		Mitigation: Implement data compression, intelligent filtering, and partial frame capture strategies to manage data size.
+	- Risk: AI models for anomaly detection may require significant training data and be prone to false positives/negatives.
+		Mitigation: Start with simple, rule-based anomaly detection and gradually transition to more sophisticated ML models as data becomes available and confidence grows. Involve rendering experts in labeling ground truth.

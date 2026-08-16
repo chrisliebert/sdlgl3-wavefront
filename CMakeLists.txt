@@ -28,7 +28,46 @@ set(FETCHCONTENT_UPDATES_DISCONNECTED OFF CACHE BOOL "Allow FetchContent to upda
 
 include(FetchContent)
 
+# --- Options ---
+option(BUILD_VULKAN_BACKEND "Enable the Vulkan rendering backend" ON)
+
 # --- Dependencies ---
+
+# Vulkan
+if(BUILD_VULKAN_BACKEND)
+    find_package(Vulkan OPTIONAL)
+    if(Vulkan_FOUND)
+        message(STATUS "Vulkan found, enabling Vulkan backend.")
+        add_compile_definitions(HAVE_VULKAN)
+    else()
+        message(WARNING "Vulkan SDK not found, disabling Vulkan backend. Install the Vulkan SDK to enable it.")
+        set(BUILD_VULKAN_BACKEND OFF)
+    endif()
+endif()
+
+# Vulkan-Hpp (Header-only C++ bindings)
+if(BUILD_VULKAN_BACKEND AND Vulkan_FOUND)
+    FetchContent_Declare(
+        vulkan-hpp
+        URL https://raw.githubusercontent.com/KhronosGroup/Vulkan-Hpp/main/vulkan/vulkan.hpp
+        DOWNLOAD_NO_EXTRACT TRUE
+    )
+    FetchContent_MakeAvailable(vulkan-hpp)
+    # The file is at ${vulkan-hpp_SOURCE_DIR}/vulkan.hpp
+    # The directory to include is just ${vulkan-hpp_SOURCE_DIR}
+    get_property(VULKAN_HPP_SOURCE_DIR SOURCE PROPERTY "LOCATION" TARGET vulkan-hpp)
+    set(VULKAN_HPP_INCLUDE_DIR ${vulkan-hpp_SOURCE_DIR})
+endif()
+
+# ImGui (UI Library)
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.90.8
+)
+FetchContent_MakeAvailable(imgui)
+# The library target is 'imgui' after MakeAvailable
+# The include directory is ${imgui_SOURCE_DIR}
 
 # GLM (Header-only math library)
 set(GLM_SUBMODULE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/dependencies/glm")
@@ -96,8 +135,26 @@ target_compile_definitions(sdlglapp PRIVATE
 target_include_directories(sdlglapp PRIVATE include)
 target_include_directories(sdlglapp PRIVATE dependencies)
 target_include_directories(sdlglapp PRIVATE "${GLM_SUBMODULE_ROOT}")
+target_include_directories(sdlglapp PRIVATE "${imgui_SOURCE_DIR}")
+
+set(IMGUI_BACKEND_DIR "${imgui_SOURCE_DIR}/backends")
+list(APPEND APP_SOURCES
+    "${IMGUI_BACKEND_DIR}/imgui_impl_sdl3.cpp"
+    "${IMGUI_BACKEND_DIR}/imgui_impl_opengl3.cpp"
+)
+
+if(BUILD_VULKAN_BACKEND AND Vulkan_FOUND)
+    target_include_directories(sdlglapp PRIVATE "${VULKAN_HPP_INCLUDE_DIR}")
+    list(APPEND APP_SOURCES
+        "${IMGUI_BACKEND_DIR}/imgui_impl_vulkan.cpp"
+    )
+endif()
 
 # --- Dependency Resolution ---
+list(APPEND SDL_LINK_LIBS imgui)
+if(BUILD_VULKAN_BACKEND AND Vulkan_FOUND)
+    list(APPEND SDL_LINK_LIBS Vulkan::Vulkan)
+endif()
 
 set(SDL3_CORE_FOUND FALSE)
 set(SDL3_IMAGE_FOUND FALSE)

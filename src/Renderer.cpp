@@ -627,8 +627,7 @@ void Renderer::addWavefront(std::string_view fileName, const glm::mat4& matrix)
                     sceneNode.vertexDataSize = localVertices.size();
                     sceneNode.vertexData = std::make_unique<Vertex[]>(sceneNode.vertexDataSize);
                     std::memcpy(sceneNode.vertexData.get(), localVertices.data(), sizeof(Vertex) * sceneNode.vertexDataSize);
-                    sceneNode.startPosition = startPosition;
-                    sceneNode.endPosition = startPosition + static_cast<GLuint>(sceneNode.vertexDataSize);
+                    sceneNode.setDrawRange(startPosition);
                     sceneNode.primitiveMode = GL_TRIANGLES;
                     sceneNode.diffuseTextureId = 0;
                     sceneNode.modelViewMatrix = matrix;
@@ -709,8 +708,7 @@ void Renderer::addWavefront(std::string_view fileName, const glm::mat4& matrix)
             sceneNode.vertexDataSize = localVertices.size();
             sceneNode.vertexData = std::make_unique<Vertex[]>(sceneNode.vertexDataSize);
             std::memcpy(sceneNode.vertexData.get(), localVertices.data(), sizeof(Vertex) * sceneNode.vertexDataSize);
-            sceneNode.startPosition = startPosition;
-            sceneNode.endPosition = startPosition + static_cast<GLuint>(sceneNode.vertexDataSize);
+            sceneNode.setDrawRange(startPosition);
             sceneNode.primitiveMode = GL_TRIANGLES;
             sceneNode.diffuseTextureId = 0;
             sceneNode.modelViewMatrix = matrix;
@@ -859,9 +857,13 @@ bool Renderer::buildScene(Camera& camera)
 {
     (void)camera;
     
-    // Populate vertexData and indices from sceneNodes
+    // Populate vertexData and indices from sceneNodes while preserving each node's
+    // global draw range in the flattened buffer. This is required because the draw
+    // path reads node.startPosition/node.endPosition as offsets into the merged VBO.
     for (auto& node : sceneNodes)
     {
+        const GLuint vertexOffset = static_cast<GLuint>(vertexData.size());
+        node.setDrawRange(vertexOffset);
         for (size_t j = 0; j < node.vertexDataSize; ++j)
         {
             vertexData.push_back(node.vertexData[j]);
