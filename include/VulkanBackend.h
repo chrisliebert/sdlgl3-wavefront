@@ -65,9 +65,6 @@ private:
     std::vector<VkFramebuffer> m_framebuffers;
 
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    VkImage m_depthImage = VK_NULL_HANDLE;
-    VkDeviceMemory m_depthImageMemory = VK_NULL_HANDLE;
-    VkImageView m_depthImageView = VK_NULL_HANDLE;
     VkFormat findDepthFormat();
     void createDepthResources();
     VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
@@ -85,6 +82,11 @@ private:
     VkDeviceMemory m_vertexBufferMemory = VK_NULL_HANDLE;
     VkBuffer m_indexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_indexBufferMemory = VK_NULL_HANDLE;
+
+    VkImage m_depthImage = VK_NULL_HANDLE;
+    VkDeviceMemory m_depthImageMemory = VK_NULL_HANDLE;
+    VkImageView m_depthImageView = VK_NULL_HANDLE;
+    VkFormat m_depthFormat = VK_FORMAT_UNDEFINED;
 
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     std::vector<vkhelpers::VulkanTexture> m_textures;

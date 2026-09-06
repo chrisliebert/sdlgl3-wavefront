@@ -214,7 +214,12 @@ void VulkanBackend::submit(const std::vector<RenderCommand>& commands)
         if (!cmd.node) continue;
         PushConstants pc{};
         pc.model = m_viewMatrix * cmd.node->modelViewMatrix;
-        pc.projection = m_projectionMatrix; pc.projection[1][1] *= -1.0f;
+                glm::mat4 clip(
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f,-1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 0.5f, 0.0f,
+            0.0f, 0.0f, 0.5f, 1.0f);
+        pc.projection = clip * m_projectionMatrix;
         vkCmdPushConstants(m_commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &pc);
         
         
@@ -718,7 +723,7 @@ VkFormat VulkanBackend::findDepthFormat() {
 }
 
 void VulkanBackend::createDepthResources() {
-    VkFormat depthFormat = findDepthFormat();
+    m_depthFormat = findDepthFormat();
     
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -728,13 +733,13 @@ void VulkanBackend::createDepthResources() {
     imageInfo.extent.depth = 1;
     imageInfo.mipLevels = 1;
     imageInfo.arrayLayers = 1;
-    imageInfo.format = depthFormat;
+    imageInfo.format = m_depthFormat;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    vkCreateImage(m_device, &imageInfo, nullptr, &m_depthImage);
+    vkCheck(vkCreateImage(m_device, &imageInfo, nullptr, &m_depthImage), "vkCreateImage(depth)");
     
     VkMemoryRequirements memRequirements;
     vkGetImageMemoryRequirements(m_device, m_depthImage, &memRequirements);
@@ -743,20 +748,20 @@ void VulkanBackend::createDepthResources() {
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = vkhelpers::findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    vkAllocateMemory(m_device, &allocInfo, nullptr, &m_depthImageMemory);
-    vkBindImageMemory(m_device, m_depthImage, m_depthImageMemory, 0);
+    vkCheck(vkAllocateMemory(m_device, &allocInfo, nullptr, &m_depthImageMemory), "vkAllocateMemory(depth)");
+    vkCheck(vkBindImageMemory(m_device, m_depthImage, m_depthImageMemory, 0), "vkBindImageMemory(depth)");
     
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = m_depthImage;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = depthFormat;
+    viewInfo.format = m_depthFormat;
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = 1;
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
-    vkCreateImageView(m_device, &viewInfo, nullptr, &m_depthImageView);
+    vkCheck(vkCreateImageView(m_device, &viewInfo, nullptr, &m_depthImageView), "vkCreateImageView(depth)");
 }
 
 void VulkanBackend::createSwapchain() {
@@ -821,7 +826,7 @@ void VulkanBackend::createRenderPass() {
     colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     
     VkAttachmentDescription depthAttachment{};
-    depthAttachment.format = findDepthFormat();
+    depthAttachment.format = m_depthFormat;
     depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
     depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -848,7 +853,7 @@ void VulkanBackend::createRenderPass() {
     renderPassInfo.pAttachments = attachments.data();
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
-    vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_renderPass);
+    vkCheck(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_renderPass), "vkCreateRenderPass");
 }
 
 void VulkanBackend::createDescriptorSetLayout() {
@@ -945,7 +950,7 @@ void VulkanBackend::createGraphicsPipeline() {
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
     rasterizer.cullMode = VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -1022,7 +1027,7 @@ void VulkanBackend::createFramebuffers() {
         framebufferInfo.width = m_swapchainExtent.width;
         framebufferInfo.height = m_swapchainExtent.height;
         framebufferInfo.layers = 1;
-        vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &m_framebuffers[i]);
+        vkCheck(vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &m_framebuffers[i]), "vkCreateFramebuffer");
     }
 }
 
