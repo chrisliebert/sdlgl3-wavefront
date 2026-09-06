@@ -1,3 +1,166 @@
+# 3D Rendering Strategy Backlog
+
+## Executive recommendation
+
+The most sensible path for this project is a staged multi-backend strategy:
+
+1. Keep the current OpenGL 3.3 path as the reliable baseline and compatibility target.
+2. Add a Vulkan backend as the primary modern renderer for performance and future growth.
+3. Keep the backend abstraction clean so both OpenGL and Vulkan share the same renderer contract.
+4. Treat asset format expansion (especially glTF) and material/texture pipeline upgrades as the next strategic layer after the backend is stable.
+5. Only consider SDL GPU or alternative abstraction layers after Vulkan is working and the architecture proves that the added abstraction is justified.
+
+This recommendation matches the patterns seen in comparable open-source projects such as `HowToVulkan`, `ogldev`, `Tiny Universe Engine`, `SDL3D`, and other small OpenGL renderer experiments: they start with a minimal baseline, evolve toward modern APIs, and keep the architecture small enough to learn and iterate quickly.
+
+---
+
+## Research snapshot: most sensible options
+
+### Option A: Vulkan renderer as the modern path (recommended)
+
+**Why it fits**
+- The project already has a render backend abstraction and a clear separation between app flow and rendering.
+- SDL3 supports Vulkan directly and is already in use for windowing and input.
+- Vulkan is the most future-proof option for modern desktop GPU workloads and matches the current trend in serious custom renderers.
+- It provides a clean upgrade path without abandoning the simple OpenGL baseline.
+
+**What this would look like**
+- `renderer.backend = auto|opengl|vulkan`
+- `auto` probes Vulkan capability first and falls back to OpenGL when unavailable.
+- Use SDL Vulkan surface creation and runtime capability checks.
+- Keep the scene, camera, culling, and material flow mostly backend-agnostic.
+- Build a minimal Vulkan MVP first: triangle/mesh upload, pipeline state, depth buffer, basic shader path, window swapchain lifecycle.
+
+**Main risks**
+- More initialization complexity than OpenGL.
+- Distinct shader pipeline (SPIR-V/GLSL-to-SPIR-V workflow).
+- Synchronization and frame lifetime bugs in the first pass.
+
+**Recommended milestone**
+- Deliver a minimal Vulkan MVP that renders a static OBJ scene with basic textures and depth testing before adding advanced effects.
+
+---
+
+### Option B: Keep OpenGL 3.3 as the main compatibility baseline
+
+**Why it fits**
+- The project explicitly targets older hardware and a lightweight footprint.
+- OpenGL remains easier to debug and simpler for teaching and experimentation.
+- It reduces project risk while rendering the existing scene pipeline reliably.
+
+**What this would look like**
+- Maintain a stable GL 3.3 renderer as the fallback and default for low-end systems.
+- Add optional modern OpenGL features behind capability checks when available.
+- Use the same renderer interface and scene graph layout so Vulkan integration remains straightforward later.
+
+**Main risk**
+- OpenGL is a legacy path and may limit long-term GPU optimization opportunities.
+
+**Recommended milestone**
+- Keep GL as the reference path and validation baseline while Vulkan matures.
+
+---
+
+### Option C: Add glTF and modern asset pipeline support next
+
+**Why it fits**
+- The project is already structured around OBJ import, materials, and scene assembly.
+- `glTF` is the current de facto format for interoperable 3D assets and is a better production target than OBJ alone.
+- Many real-world assets and tooling pipelines are built around glTF, not OBJ.
+
+**What this would look like**
+- Add a format abstraction layer for loaders (`ObjLoader`, `GltfLoader`, model import interface).
+- Support PBR texture maps, mesh transforms, node hierarchies, and material conventions.
+- Keep OBJ as a compatibility path while glTF becomes the primary modern import pipeline.
+
+**Main risk**
+- It adds asset complexity before the renderer backend is stable.
+
+**Recommended milestone**
+- Add glTF support after Vulkan MVP or in parallel with a lightweight asset abstraction layer, not before backend selection is locked.
+
+---
+
+### Option D: SDL GPU backend as a future abstraction layer
+
+**Why it fits**
+- SDL GPU offers a cleaner device abstraction than raw Vulkan and may simplify portability.
+- It is attractive if the project wants easier cross-platform rendering without managing every backend detail.
+
+**What this would look like**
+- Use it only if a future requirement calls for broad portability or a more abstract render API.
+
+**Main risk**
+- It may hide the complexity instead of reducing it, and it is not the fastest path for a renderer that already has a modern backend plan.
+
+**Recommended milestone**
+- Do this only after Vulkan has been proven and the engine’s abstraction layer is stable.
+
+---
+
+## Recommended implementation order
+
+### Phase 1: Backend stabilization
+- [ ] Stabilize `IRenderBackend` and ensure startup is backend-agnostic.
+- [ ] Add `renderer.backend = auto|opengl|vulkan` config support.
+- [ ] Create a Vulkan capability probe in SDL3.
+- [ ] Implement a minimal Vulkan backend for static mesh rendering and depth testing.
+- [ ] Keep OpenGL fallback and fail gracefully when Vulkan is unavailable.
+
+### Phase 2: Asset quality and scene realism
+- [ ] Add asset abstraction and importer interface for OBJ + glTF.
+- [ ] Improve material and texture handling.
+- [ ] Add deterministic cache behavior and compatibility checks.
+
+### Phase 3: Production-quality renderer features
+- [ ] Shadow mapping and PBR pipeline updates.
+- [ ] More robust scene graph hierarchy.
+- [ ] Advanced post-processing and frame graph structure.
+
+---
+
+## Backlog items for the roadmap
+
+### Vulkan / rendering architecture
+- [ ] **R1: Add backend selection at startup** with `auto|opengl|vulkan` and graceful fallback.
+- [ ] **R2: Create Vulkan backend skeleton** behind `IRenderBackend`.
+- [ ] **R3: Add Vulkan surface and swapchain lifecycle** using SDL3 Vulkan APIs.
+- [ ] **R4: Implement static mesh upload and draw path** for a minimal OBJ scene.
+- [ ] **R5: Add texture upload and sampler support** for material texturing.
+- [ ] **R6: Validate depth, blending, and resize behavior** against the OpenGL baseline.
+- [ ] **R7: Add diagnostics and logging** for backend selection, fallback reasons, and capability mismatches.
+
+### OpenGL compatibility and baseline
+- [ ] **G1: Keep OpenGL 3.3 as the fail-safe path** and validation target.
+- [ ] **G2: Preserve the current scene and material contract** across both backends.
+- [ ] **G3: Maintain a minimal debug rendering path** to compare GL vs Vulkan visually.
+
+### Asset pipeline and content
+- [ ] **A1: Introduce model loader abstraction** for OBJ, glTF, and future formats.
+- [ ] **A2: Support glTF metallic-roughness material pipeline** where practical.
+- [ ] **A3: Expand texture/material metadata** for PBR maps and atlas packing.
+- [ ] **A4: Add cache compatibility vNext** to support future texture/mesh pipeline improvements.
+
+### Longer-term architecture work
+- [ ] **L1: Build a true scene graph** with parent-child transforms and component separation.
+- [ ] **L2: Split renderer responsibilities** into render state, texture management, and scene management.
+- [ ] **L3: Evaluate SDL GPU only after Vulkan MVP is working** and the benefit is proven.
+
+---
+
+## Final recommendation
+
+The most sensible direction is not “replace OpenGL with Vulkan in one jump.” The better strategy is:
+
+- keep OpenGL as the safe baseline,
+- add Vulkan as the primary modern backend,
+- maintain the backend abstraction strictly,
+- and expand the asset pipeline with glTF support as the next high-value move.
+
+That gives the project a realistic path from a small OpenGL starter to a production-oriented renderer without breaking the educational and lightweight goals of the codebase.
+
+---
+
 # Remediation Backlog
 
 This document tracks the remediation plan for issues identified in `doc/PHD_CRITICAL_REVIEW.md`. Issues are prioritized from P0 (most critical) to P3 (lowest priority).
@@ -154,9 +317,9 @@ This plan organizes the work from all epics into five sprints with parallel work
 ### **Sprint 1: Foundations**
 
 -   **Workstream: Core Rendering Backend**
-    -   [ ] **E1.B01: Backend policy config and parser**: Add `renderer.backend=auto|opengl|vulkan` parsing and validation in config flow.
-    -   [ ] **E1.B02: Runtime capability probe module**: Add Vulkan capability probe using SDL Vulkan entry points and device/present checks.
-    -   [ ] **E1.B03: Backend factory and startup split**: Refactor startup into backend-agnostic bootstrap + backend-specific window/context creation.
+    -   [x] **E1.B01: Backend policy config and parser**: Add `renderer.backend=auto|opengl|vulkan` parsing and validation in config flow.
+    -   [x] **E1.B02: Runtime capability probe module**: Add Vulkan capability probe using SDL Vulkan entry points and device/present checks.
+    -   [x] **E1.B03: Backend factory and startup split**: Refactor startup into backend-agnostic bootstrap + backend-specific window/context creation.
 -   **Workstream: Asset & Cache Pipeline**
     -   [ ] **E2.B01: Cache vNext schema and chunk registry**: Define binary schema with chunk table and version upgrade path.
     -   [ ] **E2.B02: Deterministic texture inventory and normalization**: Build deterministic texture list and normalization rules.

@@ -9,7 +9,7 @@ Camera::Camera()
     glGetIntegerv( GL_VIEWPORT, mViewport );
     const float viewportWidth = static_cast<float>(mViewport[2]);
     const float viewportHeight = static_cast<float>(mViewport[3]);
-    const float aspect = (viewportWidth > 0.0f && viewportHeight > 0.0f)
+    std::cout << "Camera viewport: " << viewportWidth << "x" << viewportHeight << std::endl; const float aspect = (viewportWidth > 0.0f && viewportHeight > 0.0f)
         ? (viewportWidth / viewportHeight)
         : (16.0f / 9.0f);
     projectionMatrix = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);

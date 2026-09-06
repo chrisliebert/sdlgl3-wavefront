@@ -26,26 +26,29 @@ public:
     void endFrame() override;
 
     // SDL_gpu-specific method
-    bool bufferToGpu(Camera& camera);
-    void takeScreenshot(const char* filename);
+    bool bufferToGpu(const std::vector<Vertex>& vertexData, const std::vector<uint32_t>& indices) override;
     
     // IRenderBackend shadow interface (stub for SDL_gpu backend)
-    GLuint createShadowMap(Camera& camera) override { (void)camera; return 0; }
-    void updateShadowMap(Camera& camera) override { (void)camera; }
+    void createShadowMap(const std::vector<SceneNode>& nodes) override { (void)nodes; }
     void getShadowMapSize(int& width, int& height) const override { width = 0; height = 0; }
-    void updateLightUniforms(const Camera&, const glm::mat4&, const glm::vec3&) override {}
-    void takeScreenshot(std::string_view filename) override { (void)filename; }
+    void fitDirectionalShadowMatrix(Camera& camera, const glm::vec3& lightPosition, int shadowWidth, int shadowHeight, glm::mat4& lightView, glm::mat4& lightProjection, glm::mat4& lightSpaceMatrix) override { (void)camera; (void)lightPosition; (void)shadowWidth; (void)shadowHeight; (void)lightView; (void)lightProjection; (void)lightSpaceMatrix; }
+    void updateLightUniforms(const Camera& camera, const glm::mat4& lightSpaceMatrix, const glm::vec3& lightPos) override { (void)camera; (void)lightSpaceMatrix; (void)lightPos; }
+    
+    void initUIRendering() override {}
+    void shutdownUIRendering() override {}
+    void beginUIRender() override {}
+    void endUIRender() override {}
+    std::unique_ptr<Capture::Frame> captureFrame() override;
 
 private:
     Renderer& owner;
     SDL_Window* window;
-    SDL_GpuDevice* device;
-
-    SDL_GpuBuffer* vbo;
-    SDL_GpuBuffer* ibo;
-    SDL_GpuGraphicsPipeline* pipeline;
-    SDL_GpuBuffer* ubo;
-    SDL_GpuTexture* depthTexture;
+    void* device = nullptr;
+    void* vbo = nullptr;
+    void* ibo = nullptr;
+    void* pipeline = nullptr;
+    void* ubo = nullptr;
+    void* depthTexture = nullptr;
     uint32_t swapchainWidth;
     uint32_t swapchainHeight;
 };

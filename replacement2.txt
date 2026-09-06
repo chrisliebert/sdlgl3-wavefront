@@ -1,0 +1,17 @@
+        glLinkProgram(gpuProgram->getId());
+
+        auto* loader = gpuProgram->getUniformLoader();
+        loader->addUniform("projection", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+        loader->addUniform("view", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+        loader->addUniform("model", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+        loader->addUniform("lightSpaceMatrix", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+        loader->addUniform("lightPos", std::make_unique<UniformVec3>(glm::vec3(0.0f)));
+        loader->addUniform("viewPos", std::make_unique<UniformVec3>(glm::vec3(0.0f)));
+        loader->addUniform("diffuseTexture", std::make_unique<UniformInt>(0));
+        loader->addUniform("shadowMap", std::make_unique<UniformInt>(1));
+        loader->addUniform("normalTexture", std::make_unique<UniformInt>(2));
+        loader->addUniform("specularTexture", std::make_unique<UniformInt>(3));
+        loader->addUniform("shadows", std::make_unique<UniformInt>(1));
+        loader->addUniform("hasNormalTexture", std::make_unique<UniformInt>(0));
+        loader->addUniform("hasSpecularTexture", std::make_unique<UniformInt>(0));
+    }

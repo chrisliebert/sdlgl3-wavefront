@@ -3,6 +3,7 @@
 #include "OpenGLBackend.h"
 #include "PathUtil.h"
 #include "MathUtil.h"
+#include "Cache.h"
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
@@ -240,8 +241,16 @@ void Renderer::addTexture(std::string_view textureFileName, GLuint* textureId, s
     glTexImage2D(GL_TEXTURE_2D, 0, tex->mode, 
                  static_cast<GLsizei>(tex->width), static_cast<GLsizei>(tex->height),
                  0, tex->mode, GL_UNSIGNED_BYTE, tex->data.get());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    // Anisotropic filtering
+    GLfloat maxAniso = 0.0f;
+    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+    if (maxAniso > 0.0f) {
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+    }
 }
 
 void Renderer::addTexture(std::string_view /*textureFileName*/, GLuint* textureId, const Texture* texture)
@@ -253,8 +262,16 @@ void Renderer::addTexture(std::string_view /*textureFileName*/, GLuint* textureI
     glTexImage2D(GL_TEXTURE_2D, 0, texture->mode, 
                  static_cast<GLsizei>(texture->width), static_cast<GLsizei>(texture->height),
                  0, texture->mode, GL_UNSIGNED_BYTE, texture->data.get());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    // Anisotropic filtering
+    GLfloat maxAniso = 0.0f;
+    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+    if (maxAniso > 0.0f) {
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+    }
 }
 
 void Renderer::addTexture(std::string_view textureFileName, GLuint* textureId)
@@ -727,14 +744,7 @@ void Renderer::addWavefront(std::string_view fileName, const glm::mat4& matrix)
 // Binary Cache with Versioning (Fix #7.2)
 // ============================================================================
 
-struct BinCacheFileHeader {
-    uint32_t magic = 0x5741564F; // "OWAV" - Wavefront cache magic number
-    uint32_t version = BINARY_CACHE_VERSION;
-    size_t numMaterials;
-    size_t numSceneNodes;
-    size_t numVertices;
-    size_t numTextures;
-};
+
 
 int Renderer::createBinCacheInternal()
 {
@@ -748,90 +758,129 @@ int Renderer::createBinCacheInternal()
         return -1;
     }
 
-    BinCacheFileHeader header{};
-    header.numMaterials = materials.size();
-    header.numSceneNodes = sceneNodes.size();
-    header.numVertices = vertexData.size();
-    header.numTextures = textures.size();
-    binFile.write(reinterpret_cast<const char*>(&header), sizeof(BinCacheFileHeader));
+    Cache::CacheFileHeader header{};
+    std::vector<Cache::ChunkDescriptor> descriptors;
+    uint64_t currentOffset = sizeof(Cache::CacheFileHeader);
 
-    // Write materials in key order for deterministic cache output.
-    std::map<std::string, const Material*> orderedMaterials;
-    for (const auto& [name, mat] : materials)
-    {
-        orderedMaterials.emplace(name, &mat);
+    // Calculate sizes and create descriptors
+
+    // Materials
+    if (!materials.empty()) {
+        descriptors.push_back({Cache::ChunkType::MATERIALS, Cache::CACHE_VERSION, 0, materials.size() * sizeof(Material)}); // Placeholder size
     }
-
-    // Write materials (field-by-field, no raw struct dump)
-    for (const auto& [name, matPtr] : orderedMaterials)
-    {
-        const Material& mat = *matPtr;
-        binFile.write(mat.name, sizeof(mat.name));
-        binFile.write(reinterpret_cast<const char*>(mat.ambient), sizeof(mat.ambient));
-        binFile.write(reinterpret_cast<const char*>(mat.diffuse), sizeof(mat.diffuse));
-        binFile.write(reinterpret_cast<const char*>(mat.specular), sizeof(mat.specular));
-        binFile.write(reinterpret_cast<const char*>(mat.transmittance), sizeof(mat.transmittance));
-        binFile.write(reinterpret_cast<const char*>(mat.emission), sizeof(mat.emission));
-        binFile.write(reinterpret_cast<const char*>(&mat.shininess), sizeof(mat.shininess));
-        binFile.write(reinterpret_cast<const char*>(&mat.ior), sizeof(mat.ior));
-        binFile.write(reinterpret_cast<const char*>(&mat.dissolve), sizeof(mat.dissolve));
-        binFile.write(reinterpret_cast<const char*>(&mat.illum), sizeof(mat.illum));
-        binFile.write(mat.diffuseTexName, sizeof(mat.diffuseTexName));
-        binFile.write(mat.normalTexName, sizeof(mat.normalTexName));
-        binFile.write(mat.specularTexName, sizeof(mat.specularTexName));
-    }
-
-    // Write scene nodes (field-by-field with vertex data)
-    for (const auto& node : sceneNodes)
-    {
-        binFile.write(node.name, sizeof(node.name));
-        binFile.write(node.material, sizeof(node.material));
-        const size_t serializedVertexDataSize = (node.vertexData && node.vertexDataSize > 0) ? node.vertexDataSize : 0;
-        binFile.write(reinterpret_cast<const char*>(&serializedVertexDataSize), sizeof(serializedVertexDataSize));
-        
-        if (serializedVertexDataSize > 0)
-        {
-            binFile.write(reinterpret_cast<const char*>(node.vertexData.get()), 
-                         sizeof(Vertex) * serializedVertexDataSize);
+    // Scene Nodes
+    if (!sceneNodes.empty()) {
+        size_t sceneNodesSize = 0;
+        for (const auto& node : sceneNodes) {
+            sceneNodesSize += sizeof(node.name) + sizeof(node.material) + sizeof(node.vertexDataSize) + 
+                              sizeof(Vertex) * node.vertexDataSize + sizeof(node.modelViewMatrix) +
+                              sizeof(node.startPosition) + sizeof(node.endPosition) + sizeof(node.primitiveMode) +
+                              sizeof(node.ambientTextureId) + sizeof(node.diffuseTextureId) + 
+                              sizeof(node.normalTextureId) + sizeof(node.specularTextureId) +
+                              sizeof(node.boundingSphere) + sizeof(node.lx) + sizeof(node.ly) + sizeof(node.lz);
         }
-        
-        binFile.write(reinterpret_cast<const char*>(&node.modelViewMatrix), sizeof(node.modelViewMatrix));
-        binFile.write(reinterpret_cast<const char*>(&node.startPosition), sizeof(node.startPosition));
-        binFile.write(reinterpret_cast<const char*>(&node.endPosition), sizeof(node.endPosition));
-        binFile.write(reinterpret_cast<const char*>(&node.primitiveMode), sizeof(node.primitiveMode));
-        binFile.write(reinterpret_cast<const char*>(&node.ambientTextureId), sizeof(node.ambientTextureId));
-        binFile.write(reinterpret_cast<const char*>(&node.diffuseTextureId), sizeof(node.diffuseTextureId));
-        binFile.write(reinterpret_cast<const char*>(&node.normalTextureId), sizeof(node.normalTextureId));
-        binFile.write(reinterpret_cast<const char*>(&node.specularTextureId), sizeof(node.specularTextureId));
-        binFile.write(reinterpret_cast<const char*>(&node.boundingSphere), sizeof(node.boundingSphere));
-        binFile.write(reinterpret_cast<const char*>(&node.lx), sizeof(node.lx));
-        binFile.write(reinterpret_cast<const char*>(&node.ly), sizeof(node.ly));
-        binFile.write(reinterpret_cast<const char*>(&node.lz), sizeof(node.lz));
+        descriptors.push_back({Cache::ChunkType::SCENE_NODES, Cache::CACHE_VERSION, 0, sceneNodesSize}); // Placeholder size
+    }
+    // Vertex Data
+    if (!vertexData.empty()) {
+        descriptors.push_back({Cache::ChunkType::VERTEX_DATA, Cache::CACHE_VERSION, 0, vertexData.size() * sizeof(Vertex)}); // Placeholder size
+    }
+    // Textures (Inventory and Pixels)
+    if (!textures.empty()) {
+        size_t inventorySize = textures.size() * sizeof(Cache::TextureInventoryEntry);
+        size_t pixelsSize = 0;
+        for (const auto& [name, texture] : textures) {
+            if (texture->data && texture->isValid()) {
+                pixelsSize += static_cast<size_t>(texture->width) * texture->height * texture->bpp;
+            }
+        }
+        descriptors.push_back({Cache::ChunkType::TEXTURE_INVENTORY, Cache::CACHE_VERSION, 0, inventorySize}); // Placeholder size
+        descriptors.push_back({Cache::ChunkType::TEXTURE_ATLAS_PIXELS, Cache::CACHE_VERSION, 0, pixelsSize}); // Placeholder size
+    }
+    
+    // Update header with number of chunks
+    header.numChunks = static_cast<uint32_t>(descriptors.size());
+    binFile.write(reinterpret_cast<const char*>(&header), sizeof(Cache::CacheFileHeader));
+
+    // Write chunk descriptors - their actual offsets and sizes will be updated after data is written
+    // Start offset for data chunks is after the header and descriptor table
+    currentOffset += descriptors.size() * sizeof(Cache::ChunkDescriptor);
+    for (auto& desc : descriptors) {
+        desc.offset = currentOffset;
+        currentOffset += desc.size; // Accumulate for next chunk
+        binFile.write(reinterpret_cast<const char*>(&desc), sizeof(Cache::ChunkDescriptor));
     }
 
-    // Write vertex data
-    for (const auto& v : vertexData)
-    {
-        binFile.write(reinterpret_cast<const char*>(&v), sizeof(Vertex));
-    }
-
-    // Write textures with proper data handling
-    for (const auto& [name, texture] : textures)
-    {
-        std::string nameStr = name;
-        if (nameStr.size() >= MAX_MATERIAL_NAME_STRING_LENGTH)
-            nameStr.resize(MAX_MATERIAL_NAME_STRING_LENGTH - 1);
-        
-        binFile.write(nameStr.c_str(), MAX_MATERIAL_NAME_STRING_LENGTH);
-        binFile.write(reinterpret_cast<const char*>(&texture->bpp), sizeof(unsigned));
-        binFile.write(reinterpret_cast<const char*>(&texture->mode), sizeof(int));
-        binFile.write(reinterpret_cast<const char*>(&texture->width), sizeof(unsigned));
-        binFile.write(reinterpret_cast<const char*>(&texture->height), sizeof(unsigned));
-        
-        if (texture->data && texture->isValid())
-        {
-            size_t dataSize = static_cast<size_t>(texture->width) * texture->height * texture->bpp;
-            binFile.write(reinterpret_cast<const char*>(texture->data.get()), static_cast<std::streamsize>(dataSize));
+    // Write data chunks
+    for (const auto& desc : descriptors) {
+        if (desc.type == Cache::ChunkType::MATERIALS) {
+            for (const auto& [name, mat] : materials)
+            {
+                binFile.write(mat.name, sizeof(mat.name));
+                binFile.write(reinterpret_cast<const char*>(mat.ambient), sizeof(mat.ambient));
+                binFile.write(reinterpret_cast<const char*>(mat.diffuse), sizeof(mat.diffuse));
+                binFile.write(reinterpret_cast<const char*>(mat.specular), sizeof(mat.specular));
+                binFile.write(reinterpret_cast<const char*>(mat.transmittance), sizeof(mat.transmittance));
+                binFile.write(reinterpret_cast<const char*>(mat.emission), sizeof(mat.emission));
+                binFile.write(reinterpret_cast<const char*>(&mat.shininess), sizeof(mat.shininess));
+                binFile.write(reinterpret_cast<const char*>(&mat.ior), sizeof(mat.ior));
+                binFile.write(reinterpret_cast<const char*>(&mat.dissolve), sizeof(mat.dissolve));
+                binFile.write(reinterpret_cast<const char*>(&mat.illum), sizeof(mat.illum));
+                binFile.write(mat.diffuseTexName, sizeof(mat.diffuseTexName));
+                binFile.write(mat.normalTexName, sizeof(mat.normalTexName));
+                binFile.write(mat.specularTexName, sizeof(mat.specularTexName));
+            }
+        } else if (desc.type == Cache::ChunkType::SCENE_NODES) {
+            for (const auto& node : sceneNodes)
+            {
+                binFile.write(node.name, sizeof(node.name));
+                binFile.write(node.material, sizeof(node.material));
+                const size_t serializedVertexDataSize = (node.vertexData && node.vertexDataSize > 0) ? node.vertexDataSize : 0;
+                binFile.write(reinterpret_cast<const char*>(&serializedVertexDataSize), sizeof(serializedVertexDataSize));
+                
+                if (serializedVertexDataSize > 0)
+                {
+                    binFile.write(reinterpret_cast<const char*>(node.vertexData.get()), 
+                                 sizeof(Vertex) * serializedVertexDataSize);
+                }
+                
+                binFile.write(reinterpret_cast<const char*>(&node.modelViewMatrix), sizeof(node.modelViewMatrix));
+                binFile.write(reinterpret_cast<const char*>(&node.startPosition), sizeof(node.startPosition));
+                binFile.write(reinterpret_cast<const char*>(&node.endPosition), sizeof(node.endPosition));
+                binFile.write(reinterpret_cast<const char*>(&node.primitiveMode), sizeof(node.primitiveMode));
+                binFile.write(reinterpret_cast<const char*>(&node.ambientTextureId), sizeof(node.ambientTextureId));
+                binFile.write(reinterpret_cast<const char*>(&node.diffuseTextureId), sizeof(node.diffuseTextureId));
+                binFile.write(reinterpret_cast<const char*>(&node.normalTextureId), sizeof(node.normalTextureId));
+                binFile.write(reinterpret_cast<const char*>(&node.specularTextureId), sizeof(node.specularTextureId));
+                binFile.write(reinterpret_cast<const char*>(&node.boundingSphere), sizeof(node.boundingSphere));
+                binFile.write(reinterpret_cast<const char*>(&node.lx), sizeof(node.lx));
+                binFile.write(reinterpret_cast<const char*>(&node.ly), sizeof(node.ly));
+                binFile.write(reinterpret_cast<const char*>(&node.lz), sizeof(node.lz));
+            }
+        } else if (desc.type == Cache::ChunkType::VERTEX_DATA) {
+            for (const auto& v : vertexData)
+            {
+                binFile.write(reinterpret_cast<const char*>(&v), sizeof(Vertex));
+            }
+        } else if (desc.type == Cache::ChunkType::TEXTURE_INVENTORY) {
+            for (const auto& [name, texture] : textures) {
+                Cache::TextureInventoryEntry entry;
+                std::strncpy(entry.normalizedPath, name.c_str(), sizeof(entry.normalizedPath) - 1);
+                entry.normalizedPath[sizeof(entry.normalizedPath) - 1] = '\0';
+                entry.width = texture->width;
+                entry.height = texture->height;
+                entry.bpp = texture->bpp;
+                binFile.write(reinterpret_cast<const char*>(&entry), sizeof(Cache::TextureInventoryEntry));
+            }
+        } else if (desc.type == Cache::ChunkType::TEXTURE_ATLAS_PIXELS) {
+            for (const auto& [name, texture] : textures)
+            {
+                if (texture->data && texture->isValid())
+                {
+                    size_t dataSize = static_cast<size_t>(texture->width) * texture->height * texture->bpp;
+                    binFile.write(reinterpret_cast<const char*>(texture->data.get()), static_cast<std::streamsize>(dataSize));
+                }
+            }
         }
     }
 
@@ -957,174 +1006,186 @@ bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
     {
         clearSceneData();
 
-        BinCacheFileHeader header{};
-        if (!readExact(&header, sizeof(BinCacheFileHeader)))
+        Cache::CacheFileHeader header{};
+        if (!readExact(&header, sizeof(Cache::CacheFileHeader)))
         {
             return failLoad("Unable to read cache header");
         }
 
-        if (header.magic != 0x5741564F || header.version != BINARY_CACHE_VERSION)
+        if (header.magic != Cache::CACHE_MAGIC || header.version != Cache::CACHE_VERSION)
         {
-            std::cerr << "Incompatible cache format: expected v" << BINARY_CACHE_VERSION
+            std::cerr << "Incompatible cache format: expected v" << Cache::CACHE_VERSION
                       << ", got v" << header.version << std::endl;
             return false;
         }
 
-        constexpr size_t kMaxMaterialCount = 100000;
-        constexpr size_t kMaxSceneNodeCount = 100000;
-        constexpr size_t kMaxVertexCount = 50000000;
-        constexpr size_t kMaxTextureCount = 100000;
-        constexpr size_t kMaxNodeVertexCount = 50000000;
 
-        if (header.numMaterials > kMaxMaterialCount ||
-            header.numSceneNodes > kMaxSceneNodeCount ||
-            header.numVertices > kMaxVertexCount ||
-            header.numTextures > kMaxTextureCount)
-        {
-            return failLoad("Cache header contains unreasonable counts");
+
+        std::vector<Cache::ChunkDescriptor> descriptors(header.numChunks);
+        if (!readExact(descriptors.data(), header.numChunks * sizeof(Cache::ChunkDescriptor))) {
+            return failLoad("Unable to read chunk descriptors");
         }
+        
+        // This vector will temporarily store texture inventory entries until pixel data is loaded
+        std::vector<Cache::TextureInventoryEntry> textureInventory;
 
-        for (size_t i = 0; i < header.numMaterials; ++i)
-        {
-            Material m{};
-            if (!readExact(m.name, sizeof(m.name)) ||
-                !readExact(m.ambient, sizeof(m.ambient)) ||
-                !readExact(m.diffuse, sizeof(m.diffuse)) ||
-                !readExact(m.specular, sizeof(m.specular)) ||
-                !readExact(m.transmittance, sizeof(m.transmittance)) ||
-                !readExact(m.emission, sizeof(m.emission)) ||
-                !readExact(&m.shininess, sizeof(m.shininess)) ||
-                !readExact(&m.ior, sizeof(m.ior)) ||
-                !readExact(&m.dissolve, sizeof(m.dissolve)) ||
-                !readExact(&m.illum, sizeof(m.illum)) ||
-                !readExact(m.diffuseTexName, sizeof(m.diffuseTexName)) ||
-                !readExact(m.normalTexName, sizeof(m.normalTexName)) ||
-                !readExact(m.specularTexName, sizeof(m.specularTexName)))
-            {
-                return failLoad("Cache file ended while reading materials");
+        for (const auto& desc : descriptors) {
+            binFile.seekg(static_cast<std::streamoff>(desc.offset), std::ios::beg);
+            if (!binFile.good()) {
+                return failLoad("Seek failed to chunk data");
             }
 
-            m.name[sizeof(m.name) - 1] = '\0';
-            if (m.name[0] != '\0')
-            {
-                const size_t nameLen = boundedStringLength(m.name, sizeof(m.name));
-                materials.emplace(std::string(m.name, nameLen), m);
-            }
-        }
-
-        for (size_t i = 0; i < header.numSceneNodes; ++i)
-        {
-            SceneNode node{};
-            if (!readExact(node.name, sizeof(node.name)) ||
-                !readExact(node.material, sizeof(node.material)) ||
-                !readExact(&node.vertexDataSize, sizeof(node.vertexDataSize)))
-            {
-                return failLoad("Cache file ended while reading scene node header");
-            }
-
-            node.name[sizeof(node.name) - 1] = '\0';
-            node.material[sizeof(node.material) - 1] = '\0';
-
-            if (node.vertexDataSize > kMaxNodeVertexCount)
-            {
-                return failLoad("Cache node vertex count is too large");
-            }
-
-            const uint64_t vertexBytes = static_cast<uint64_t>(node.vertexDataSize) * static_cast<uint64_t>(sizeof(Vertex));
-            if (vertexBytes > remainingBytes())
-            {
-                return failLoad("Cache node vertex data is truncated");
-            }
-
-            if (node.vertexDataSize > 0)
-            {
-                node.vertexData = std::make_unique<Vertex[]>(node.vertexDataSize);
-                if (!readExact(node.vertexData.get(), static_cast<size_t>(vertexBytes)))
+            if (desc.type == Cache::ChunkType::MATERIALS) {
+                constexpr size_t kMaxMaterialCount = 100000;
+                size_t numMaterials = desc.size / sizeof(Material);
+                if (numMaterials > kMaxMaterialCount) {
+                    return failLoad("Cache material count is too large");
+                }
+                for (size_t i = 0; i < numMaterials; ++i)
                 {
-                    return failLoad("Cache file ended while reading scene node vertices");
+                    Material m{};
+                    if (!readExact(m.name, sizeof(m.name)) ||
+                        !readExact(m.ambient, sizeof(m.ambient)) ||
+                        !readExact(m.diffuse, sizeof(m.diffuse)) ||
+                        !readExact(m.specular, sizeof(m.specular)) ||
+                        !readExact(m.transmittance, sizeof(m.transmittance)) ||
+                        !readExact(m.emission, sizeof(m.emission)) ||
+                        !readExact(&m.shininess, sizeof(m.shininess)) ||
+                        !readExact(&m.ior, sizeof(m.ior)) ||
+                        !readExact(&m.dissolve, sizeof(m.dissolve)) ||
+                        !readExact(&m.illum, sizeof(m.illum)) ||
+                        !readExact(m.diffuseTexName, sizeof(m.diffuseTexName)) ||
+                        !readExact(m.normalTexName, sizeof(m.normalTexName)) ||
+                        !readExact(m.specularTexName, sizeof(m.specularTexName)))
+                    {
+                        return failLoad("Cache file ended while reading materials chunk");
+                    }
+
+                    m.name[sizeof(m.name) - 1] = '\0';
+                    if (m.name[0] != '\0')
+                    {
+                        const size_t nameLen = boundedStringLength(m.name, sizeof(m.name));
+                        materials.emplace(std::string(m.name, nameLen), m);
+                    }
+                }
+            } else if (desc.type == Cache::ChunkType::SCENE_NODES) {
+                constexpr size_t kMaxSceneNodeCount = 100000;
+                constexpr size_t kMaxNodeVertexCount = 50000000;
+                size_t bytesRead = 0;
+                while (bytesRead < desc.size) {
+                    SceneNode node{};
+                    size_t currentReadSize = 0;
+                    if (!readExact(node.name, sizeof(node.name))) return failLoad("Cache file ended while reading scene node name");
+                    currentReadSize += sizeof(node.name);
+                    if (!readExact(node.material, sizeof(node.material))) return failLoad("Cache file ended while reading scene node material");
+                    currentReadSize += sizeof(node.material);
+                    if (!readExact(&node.vertexDataSize, sizeof(node.vertexDataSize))) return failLoad("Cache file ended while reading scene node vertexDataSize");
+                    currentReadSize += sizeof(node.vertexDataSize);
+                    
+                    node.name[sizeof(node.name) - 1] = '\0';
+                    node.material[sizeof(node.material) - 1] = '\0';
+
+                    if (node.vertexDataSize > kMaxNodeVertexCount)
+                    {
+                        return failLoad("Cache node vertex count is too large");
+                    }
+
+                    const uint64_t vertexBytes = static_cast<uint64_t>(node.vertexDataSize) * static_cast<uint64_t>(sizeof(Vertex));
+                    currentReadSize += static_cast<size_t>(vertexBytes);
+
+                    if (node.vertexDataSize > 0)
+                    {
+                        node.vertexData = std::make_unique<Vertex[]>(node.vertexDataSize);
+                        if (!readExact(node.vertexData.get(), static_cast<size_t>(vertexBytes)))
+                        {
+                            return failLoad("Cache file ended while reading scene node vertices");
+                        }
+                    }
+
+                    if (!readExact(&node.modelViewMatrix, sizeof(node.modelViewMatrix))) return failLoad("Cache file ended while reading scene node modelViewMatrix");
+                    currentReadSize += sizeof(node.modelViewMatrix);
+                    if (!readExact(&node.startPosition, sizeof(node.startPosition))) return failLoad("Cache file ended while reading scene node startPosition");
+                    currentReadSize += sizeof(node.startPosition);
+                    if (!readExact(&node.endPosition, sizeof(node.endPosition))) return failLoad("Cache file ended while reading scene node endPosition");
+                    currentReadSize += sizeof(node.endPosition);
+                    if (!readExact(&node.primitiveMode, sizeof(node.primitiveMode))) return failLoad("Cache file ended while reading scene node primitiveMode");
+                    currentReadSize += sizeof(node.primitiveMode);
+                    if (!readExact(&node.ambientTextureId, sizeof(node.ambientTextureId))) return failLoad("Cache file ended while reading scene node ambientTextureId");
+                    currentReadSize += sizeof(node.ambientTextureId);
+                    if (!readExact(&node.diffuseTextureId, sizeof(node.diffuseTextureId))) return failLoad("Cache file ended while reading scene node diffuseTextureId");
+                    currentReadSize += sizeof(node.diffuseTextureId);
+                    if (!readExact(&node.normalTextureId, sizeof(node.normalTextureId))) return failLoad("Cache file ended while reading scene node normalTextureId");
+                    currentReadSize += sizeof(node.normalTextureId);
+                    if (!readExact(&node.specularTextureId, sizeof(node.specularTextureId))) return failLoad("Cache file ended while reading scene node specularTextureId");
+                    currentReadSize += sizeof(node.specularTextureId);
+                    if (!readExact(&node.boundingSphere, sizeof(node.boundingSphere))) return failLoad("Cache file ended while reading scene node boundingSphere");
+                    currentReadSize += sizeof(node.boundingSphere);
+                    if (!readExact(&node.lx, sizeof(node.lx))) return failLoad("Cache file ended while reading scene node lx");
+                    currentReadSize += sizeof(node.lx);
+                    if (!readExact(&node.ly, sizeof(node.ly))) return failLoad("Cache file ended while reading scene node ly");
+                    currentReadSize += sizeof(node.ly);
+                    if (!readExact(&node.lz, sizeof(node.lz))) return failLoad("Cache file ended while reading scene node lz");
+                    currentReadSize += sizeof(node.lz);
+
+                    node.diffuseTextureId = 0;
+                    sceneNodes.push_back(std::move(node));
+                    bytesRead += currentReadSize;
+                }
+            } else if (desc.type == Cache::ChunkType::VERTEX_DATA) {
+                constexpr size_t kMaxVertexCount = 50000000;
+                size_t numVertices = desc.size / sizeof(Vertex);
+                if (numVertices > kMaxVertexCount) {
+                    return failLoad("Cache vertex count is too large");
+                }
+                vertexData.reserve(numVertices);
+                indices.reserve(numVertices);
+                for (size_t i = 0; i < numVertices; ++i)
+                {
+                    Vertex v{};
+                    if (!readExact(&v, sizeof(Vertex)))
+                    {
+                        return failLoad("Cache file ended while reading vertex data chunk");
+                    }
+                    vertexData.push_back(v);
+                    indices.push_back(static_cast<GLuint>(indices.size()));
+                }
+            } else if (desc.type == Cache::ChunkType::TEXTURE_INVENTORY) {
+                size_t numTextureEntries = desc.size / sizeof(Cache::TextureInventoryEntry);
+                textureInventory.resize(numTextureEntries);
+                if (!readExact(textureInventory.data(), desc.size)) {
+                    return failLoad("Cache file ended while reading texture inventory chunk");
+                }
+            } else if (desc.type == Cache::ChunkType::TEXTURE_ATLAS_PIXELS) {
+                size_t pixelsRead = 0;
+                for (const auto& entry : textureInventory)
+                {
+                    const uint64_t imageSize64 = static_cast<uint64_t>(entry.width) *
+                                                 static_cast<uint64_t>(entry.height) *
+                                                 static_cast<uint64_t>(entry.bpp);
+                    if (imageSize64 == 0 || imageSize64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
+                    {
+                        return failLoad("Cache texture data is truncated or invalid (from inventory)");
+                    }
+                    const size_t imageSize = static_cast<size_t>(imageSize64);
+                    
+                    auto texture = std::make_shared<Texture>();
+                    texture->width = entry.width;
+                    texture->height = entry.height;
+                    texture->bpp = entry.bpp;
+                    texture->mode = (entry.bpp == 4) ? GL_RGBA : GL_RGB; // Derive mode from bpp
+                    texture->data = std::shared_ptr<unsigned char[]>(new unsigned char[imageSize], [](unsigned char* p) { delete[] p; });
+                    if (!readExact(texture->data.get(), imageSize))
+                    {
+                        return failLoad("Cache file ended while reading texture pixel data");
+                    }
+                    
+                    textures[std::string(entry.normalizedPath)] = texture;
+                    pixelsRead += imageSize;
+                }
+                if (pixelsRead != desc.size) {
+                    return failLoad("Mismatch between reported texture pixel chunk size and data read.");
                 }
             }
-
-            if (!readExact(&node.modelViewMatrix, sizeof(node.modelViewMatrix)) ||
-                !readExact(&node.startPosition, sizeof(node.startPosition)) ||
-                !readExact(&node.endPosition, sizeof(node.endPosition)) ||
-                !readExact(&node.primitiveMode, sizeof(node.primitiveMode)) ||
-                !readExact(&node.ambientTextureId, sizeof(node.ambientTextureId)) ||
-                !readExact(&node.diffuseTextureId, sizeof(node.diffuseTextureId)) ||
-                !readExact(&node.normalTextureId, sizeof(node.normalTextureId)) ||
-                !readExact(&node.specularTextureId, sizeof(node.specularTextureId)) ||
-                !readExact(&node.boundingSphere, sizeof(node.boundingSphere)) ||
-                !readExact(&node.lx, sizeof(node.lx)) ||
-                !readExact(&node.ly, sizeof(node.ly)) ||
-                !readExact(&node.lz, sizeof(node.lz)))
-            {
-                return failLoad("Cache file ended while reading scene node payload");
-            }
-
-            node.diffuseTextureId = 0;
-            sceneNodes.push_back(std::move(node));
-        }
-
-        vertexData.reserve(header.numVertices);
-        indices.reserve(header.numVertices);
-        for (size_t i = 0; i < header.numVertices; ++i)
-        {
-            Vertex v{};
-            if (!readExact(&v, sizeof(Vertex)))
-            {
-                return failLoad("Cache file ended while reading vertex data");
-            }
-            vertexData.push_back(v);
-            indices.push_back(static_cast<GLuint>(indices.size()));
-        }
-
-        size_t texturesLoaded = 0;
-        while (texturesLoaded < header.numTextures)
-        {
-            char nameBuf[MAX_MATERIAL_NAME_STRING_LENGTH]{};
-            unsigned texWidth = 0;
-            unsigned texHeight = 0;
-            unsigned texBpp = 0;
-            int texMode = 0;
-            if (!readExact(nameBuf, MAX_MATERIAL_NAME_STRING_LENGTH) ||
-                !readExact(&texBpp, sizeof(unsigned)) ||
-                !readExact(&texMode, sizeof(int)) ||
-                !readExact(&texWidth, sizeof(unsigned)) ||
-                !readExact(&texHeight, sizeof(unsigned)))
-            {
-                return failLoad("Cache file ended while reading texture header");
-            }
-
-            if (texWidth == 0 || texHeight == 0 || texBpp == 0 || texBpp > 16)
-            {
-                return failLoad("Cache texture header is invalid");
-            }
-
-            const uint64_t imageSize64 = static_cast<uint64_t>(texWidth) *
-                                         static_cast<uint64_t>(texHeight) *
-                                         static_cast<uint64_t>(texBpp);
-            if (imageSize64 == 0 || imageSize64 > remainingBytes() || imageSize64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
-            {
-                return failLoad("Cache texture data is truncated or invalid");
-            }
-
-            const size_t imageSize = static_cast<size_t>(imageSize64);
-            auto texture = std::make_shared<Texture>();
-            texture->width = texWidth;
-            texture->height = texHeight;
-            texture->bpp = texBpp;
-            texture->mode = texMode;
-            texture->data = std::shared_ptr<unsigned char[]>(new unsigned char[imageSize], [](unsigned char* p) { delete[] p; });
-            if (!readExact(texture->data.get(), imageSize))
-            {
-                return failLoad("Cache file ended while reading texture data");
-            }
-
-            nameBuf[sizeof(nameBuf) - 1] = '\0';
-            const size_t nameLen = boundedStringLength(nameBuf, sizeof(nameBuf));
-            const std::string nameStr(nameBuf, nameLen);
-            textures[nameStr] = texture;
-            ++texturesLoaded;
         }
     }
     catch (const std::bad_alloc&)
@@ -1143,9 +1204,38 @@ bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
     return checkScene();
 }
 
+void Renderer::resolveTextures()
+{
+    for (auto& node : sceneNodes)
+    {
+        if (node.material[0] == '\0') continue;
+        
+        std::string materialName(node.material);
+        auto it = materials.find(materialName);
+        if (it != materials.end())
+        {
+            const Material& mat = it->second;
+            
+            if (mat.hasDiffuseTexture())
+            {
+                addTexture(mat.diffuseTexName, &node.diffuseTextureId);
+            }
+            if (mat.normalTexName[0] != '\0')
+            {
+                addTexture(mat.normalTexName, &node.normalTextureId);
+            }
+            if (mat.specularTexName[0] != '\0')
+            {
+                addTexture(mat.specularTexName, &node.specularTextureId);
+            }
+        }
+    }
+}
+
 void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)
 {
-    backend->bufferToGpu(camera, cacheFileName, loadCachedScene);
+    resolveTextures();
+    backend->bufferToGpu(vertexData, indices);
 
     if (!loadCachedScene && configLoader->getBool("renderer.createBinObj"))
     {
@@ -1335,7 +1425,7 @@ GLuint Renderer::createShadowMap(Camera& camera)
 {
     if (shadowMap == 0)
     {
-        shadowMap = backend->createShadowMap(camera);
+        backend->createShadowMap(sceneNodes);
         backend->getShadowMapSize(shadowWidth, shadowHeight);
     }
     return shadowMap;
@@ -1456,35 +1546,12 @@ void Renderer::render(Camera& camera, const FrameContext& frameContext)
         visibleNodesSortedScratch.swap(occlusionFilteredScratch);
     }
 
-    // Texture bucketing reduces wide key comparisons versus global sort.
-    textureBucketOrderScratch.clear();
-    for (auto& [textureId, bucket] : textureBucketsScratch)
-    {
-        bucket.clear();
-    }
-
-    for (const auto& key : visibleNodesSortedScratch)
-    {
-        auto& bucket = textureBucketsScratch[key.textureId];
-        if (bucket.empty())
-        {
-            textureBucketOrderScratch.push_back(key.textureId);
-        }
-        bucket.push_back(key);
-    }
-
-    std::sort(textureBucketOrderScratch.begin(), textureBucketOrderScratch.end());
-
-    visibleNodesSortedScratch.clear();
-    for (GLuint textureId : textureBucketOrderScratch)
-    {
-        auto& bucket = textureBucketsScratch[textureId];
-        std::sort(bucket.begin(), bucket.end(),
-            [](const SortKey& a, const SortKey& b) {
-                return a.startPosition < b.startPosition;
-            });
-        visibleNodesSortedScratch.insert(visibleNodesSortedScratch.end(), bucket.begin(), bucket.end());
-    }
+    std::sort(visibleNodesSortedScratch.begin(), visibleNodesSortedScratch.end(),
+        [](const SortKey& a, const SortKey& b) {
+            if (a.textureId != b.textureId)
+                return a.textureId < b.textureId;
+            return a.startPosition < b.startPosition;
+        });
 
     renderCommandsScratch.clear();
     renderCommandsScratch.reserve(visibleNodesSortedScratch.size());
@@ -1527,3 +1594,4 @@ bool Renderer::isVerboseEnabled() const
 {
     return configLoader ? configLoader->getBool("renderer.verbose") : false;
 }
+

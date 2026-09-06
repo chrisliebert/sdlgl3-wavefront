@@ -1,7 +1,8 @@
 #include "OpenGLBackend.h"
+#include "Renderer.h"
 #include "ConfigLoader.h"
 #include "Camera.h"
-#include "Renderer.h"
+#include "SceneNode.h"
 #include <iostream>
 #include <limits>
 #include <algorithm>
@@ -26,58 +27,117 @@ inline void _checkForGLSLError(GLuint programId) {
 // OpenGLBackend Implementation
 // ============================================================================
 
-OpenGLBackend::OpenGLBackend(Renderer& renderer) 
+OpenGLBackend::OpenGLBackend(Renderer& renderer)
     : owner(renderer)
 {
-    const auto& cfg = getConfig();
-    usePersistentMappedVbo = cfg.hasVar("renderer.vbo.persistent") ? cfg.getBool("renderer.vbo.persistent") : false;
-    verboseLogging = cfg.hasVar("renderer.verbose") ? cfg.getBool("renderer.verbose") : false;
-    cullFaceEnabled = cfg.hasVar("cullFace") ? cfg.getBool("cullFace") : false;
-    clearR = cfg.hasVar("renderer.clearColor.r") ? cfg.getFloat("renderer.clearColor.r") : 1.0f;
-    clearG = cfg.hasVar("renderer.clearColor.g") ? cfg.getFloat("renderer.clearColor.g") : 0.8f;
-    clearB = cfg.hasVar("renderer.clearColor.b") ? cfg.getFloat("renderer.clearColor.b") : 0.8f;
-    clearA = cfg.hasVar("renderer.clearColor.a") ? cfg.getFloat("renderer.clearColor.a") : 1.0f;
-    depthVertShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(cfg.getVar("shader.depth.vert"))).string();
-    depthFragShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(cfg.getVar("shader.depth.frag"))).string();
-    mainVertShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(cfg.getVar("shader.vert"))).string();
-    mainFragShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(cfg.getVar("shader.frag"))).string();
-    
-    shadowWidthW = cfg.getInt("shadow.width");
-    shadowHeightH = cfg.getInt("shadow.height");
 }
 
 OpenGLBackend::~OpenGLBackend()
 {
+    shutdown();
 }
 
-ConfigLoader& OpenGLBackend::getConfig()
+bool OpenGLBackend::initialize(SDL_Window* window)
 {
-    return *owner.configLoader;
-}
+    m_window = window;
+    
+    auto& config = owner.configLoader;
 
-bool OpenGLBackend::initialize(SDL_Window* w)
-{
-    window = w;
+    // --- Start of moved code from main.cpp ---
+    struct GlContextVersion { int major; int minor; };
+    constexpr std::array<GlContextVersion, 4> candidates = {{
+        {4, 6}, {4, 5}, {4, 3}, {3, 3}
+    }};
+
+    m_glContext = nullptr;
+    for (const auto& candidate : candidates)
+    {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, candidate.major);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, candidate.minor);
+        m_glContext = SDL_GL_CreateContext(m_window);
+        if (m_glContext != nullptr)
+        {
+            std::cout << "Requested and received OpenGL " << candidate.major << "." << candidate.minor << " core context" << std::endl;
+            break;
+        }
+    }
+
+    if (m_glContext == nullptr)
+    {
+        std::cerr << "Failed to create any suitable OpenGL context." << std::endl;
+        return false;
+    }
+
+    SDL_GL_SetSwapInterval(0);
+
+    if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress)))
+    {
+        std::cerr << "Something went wrong initializing GLAD!" << std::endl;
+        return false;
+    }
+
+    if (GLVersion.major < 3 || (GLVersion.major == 3 && GLVersion.minor < 3))
+    {
+        std::cerr << "Your system doesn't support OpenGL >= 3.3 core features!" << std::endl;
+        return false;
+    }
+    // --- End of moved code ---
+
+    usePersistentMappedVbo = config->hasVar("renderer.vbo.persistent") ? config->getBool("renderer.vbo.persistent") : false;
+    verboseLogging = config->hasVar("renderer.verbose") ? config->getBool("renderer.verbose") : false;
+    cullFaceEnabled = config->hasVar("cullFace") ? config->getBool("cullFace") : false;
+    clearR = config->hasVar("renderer.clearColor.r") ? config->getFloat("renderer.clearColor.r") : 1.0f;
+    clearG = config->hasVar("renderer.clearColor.g") ? config->getFloat("renderer.clearColor.g") : 0.8f;
+    clearB = config->hasVar("renderer.clearColor.b") ? config->getFloat("renderer.clearColor.b") : 0.8f;
+    clearA = config->hasVar("renderer.clearColor.a") ? config->getFloat("renderer.clearColor.a") : 1.0f;
+    depthVertShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(config->getVar("shader.depth.vert"))).string();
+    depthFragShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(config->getVar("shader.depth.frag"))).string();
+    mainVertShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(config->getVar("shader.vert"))).string();
+    mainFragShaderPath = (std::filesystem::path(SHADER_DIRECTORY) / std::string(config->getVar("shader.frag"))).string();
+    
+    shadowWidthW = config->getInt("shadow.width");
+    shadowHeightH = config->getInt("shadow.height");
+
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
 
-    glDisable(GL_CULL_FACE);
+    if (cullFaceEnabled)
+        glEnable(GL_CULL_FACE);
+    else
+        glDisable(GL_CULL_FACE);
 
     glClearColor(clearR, clearG, clearB, clearA);
     return true;
 }
 
+void OpenGLBackend::initUIRendering()
+{
+    // Stub
+}
+
+void OpenGLBackend::shutdownUIRendering()
+{
+    // Stub
+}
+
+void OpenGLBackend::beginUIRender()
+{
+    // Stub
+}
+
+void OpenGLBackend::endUIRender()
+{
+    // Stub
+}
+
+std::unique_ptr<Capture::Frame> OpenGLBackend::captureFrame()
+{
+    // Stub
+    return nullptr;
+}
+
 void OpenGLBackend::shutdown()
 {
-    // Delete OpenGL textures for scene nodes
-    for (const auto& node : owner.sceneNodes)
-    {
-        if (node.diffuseTextureId != 0)
-        {
-            glDeleteTextures(1, &node.diffuseTextureId);
-        }
-    }
-
     // Unmap persistent VBO if active
     if (persistentVboActive && persistentVboPtr)
     {
@@ -99,17 +159,18 @@ void OpenGLBackend::shutdown()
 
     if (gpuProgram) { gpuProgram.reset(); }
     if (shadowProgram) { shadowProgram.reset(); }
-}
 
-void OpenGLBackend::beginFrame(const FrameContext& frameContext)
-{
-    (void)frameContext;
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (m_glContext != nullptr)
+    {
+        SDL_GL_DeleteContext(m_glContext);
+        m_glContext = nullptr;
+    }
 }
 
 void OpenGLBackend::submit(const std::vector<RenderCommand>& commands)
 {
-    if (owner.sceneNodes.empty()) return;
+    lastSubmittedCommands = commands;
+    if (commands.empty()) return;
 
     GLint prevVao = 0;
     GLint prevArrayBuffer = 0;
@@ -118,7 +179,7 @@ void OpenGLBackend::submit(const std::vector<RenderCommand>& commands)
     glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevArrayBuffer);
     glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElementArrayBuffer);
 
-    glBindVertexArray(vao);
+    checkForGLError(); glBindVertexArray(vao); checkForGLError();
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
     glEnableVertexAttribArray(2);
@@ -131,8 +192,8 @@ void OpenGLBackend::submit(const std::vector<RenderCommand>& commands)
         return;
     }
     
-    gpuProgram->use();
-    gpuProgram->getUniformLoader()->load();
+    gpuProgram->use(); checkForGLError();
+    gpuProgram->getUniformLoader()->load(); checkForGLError();
 
     GLuint currentDiffuseTextureId = static_cast<GLuint>(-1);
     GLuint currentNormalTextureId = static_cast<GLuint>(-1);
@@ -146,6 +207,7 @@ void OpenGLBackend::submit(const std::vector<RenderCommand>& commands)
         const SceneNode* node = cmd.node;
         if (!node) continue;
 
+        if (Uniform* uniform = uniformLoader->get("model")) { if (auto* matUniform = dynamic_cast<UniformMat4*>(uniform)) { matUniform->set(node->modelViewMatrix); matUniform->load(); } }
         const GLuint diffuseTextureToBind = (node->diffuseTextureId != 0) ? node->diffuseTextureId : fallbackWhiteTexture;
         const GLuint normalTextureToBind = (node->normalTextureId != 0) ? node->normalTextureId : fallbackNormalTexture;
         const GLuint specularTextureToBind = (node->specularTextureId != 0) ? node->specularTextureId : fallbackWhiteTexture;
@@ -183,12 +245,9 @@ void OpenGLBackend::submit(const std::vector<RenderCommand>& commands)
             hasSpecularUniform->load();
         }
 
-        if (owner.getShadowsEnabled())
-        {
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, shadowMap);
-        }
-
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, shadowMap);
+        
         const GLsizei count = static_cast<GLsizei>(node->endPosition - node->startPosition);
         if (count > 0)
         {
@@ -205,96 +264,52 @@ void OpenGLBackend::submit(const std::vector<RenderCommand>& commands)
     glBindVertexArray(static_cast<GLuint>(prevVao));
 }
 
-void OpenGLBackend::endFrame()
-{
-    if (window) SDL_GL_SwapWindow(window);
-}
-
 // ============================================================================
 // GPU Buffer Management with Double-Buffered VBO Fallback
 // ============================================================================
 
-bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename*/, bool /*loadCachedScene*/)
+bool OpenGLBackend::bufferToGpu(const std::vector<Vertex>& vertexData, const std::vector<uint32_t>& indices)
 {
     if (verboseLogging) std::cout << "Buffering to GPU" << std::endl;
-
-    // Load textures for scene nodes
-    for (size_t i = 0; i < owner.sceneNodes.size(); ++i)
-    {
-        const char* materialName = owner.sceneNodes[i].material;
-        auto matIt = owner.materials.find(materialName);
-        if (matIt == owner.materials.end())
-        {
-            std::cerr << "Material " << materialName << " was not loaded" << std::endl;
-        }
-        else if (std::strlen(matIt->second.diffuseTexName) > 0)
-        {
-            if (verboseLogging)
-            {
-                std::cout << "Texture stage [" << i << "] diffuse: " << matIt->second.diffuseTexName << std::endl;
-            }
-            owner.addTexture(matIt->second.diffuseTexName, &owner.sceneNodes[i].diffuseTextureId);
-        }
-
-        if (matIt != owner.materials.end() && std::strlen(matIt->second.normalTexName) > 0)
-        {
-            if (verboseLogging)
-            {
-                std::cout << "Texture stage [" << i << "] normal: " << matIt->second.normalTexName << std::endl;
-            }
-            owner.addTexture(matIt->second.normalTexName, &owner.sceneNodes[i].normalTextureId);
-        }
-
-        if (matIt != owner.materials.end() && std::strlen(matIt->second.specularTexName) > 0)
-        {
-            if (verboseLogging)
-            {
-                std::cout << "Texture stage [" << i << "] specular: " << matIt->second.specularTexName << std::endl;
-            }
-            owner.addTexture(matIt->second.specularTexName, &owner.sceneNodes[i].specularTextureId);
-        }
-    }
-
-    if (verboseLogging) std::cout << "Texture stage complete" << std::endl;
 
     checkForGLError();
 
     // Create VAO and VBO
     glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
+    checkForGLError(); glBindVertexArray(vao); checkForGLError();
 
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     
-    const size_t vertexBytes = sizeof(Vertex) * owner.vertexData.size();
+    vboSize = sizeof(Vertex) * vertexData.size();
     
     // Double-buffered VBO approach for compatibility with older OpenGL versions
     if (usePersistentMappedVbo && (GLVersion.major > 4 || (GLVersion.major == 4 && GLVersion.minor >= 4)))
     {
         // Try persistent mapping first (OpenGL 4.4+)
         GLbitfield mapFlags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
-        glBufferStorage(GL_ARRAY_BUFFER, vertexBytes, nullptr, mapFlags);
-        persistentVboPtr = glMapBufferRange(GL_ARRAY_BUFFER, 0, vertexBytes, mapFlags);
+        glBufferStorage(GL_ARRAY_BUFFER, vboSize, nullptr, mapFlags);
+        persistentVboPtr = glMapBufferRange(GL_ARRAY_BUFFER, 0, vboSize, mapFlags);
         if (persistentVboPtr)
         {
-            std::memcpy(persistentVboPtr, owner.vertexData.data(), vertexBytes);
+            std::memcpy(persistentVboPtr, vertexData.data(), vboSize);
             persistentVboActive = true;
         }
         else
         {
             // Fallback path: explicit map/flush/unmap for deterministic visibility.
-            glBufferData(GL_ARRAY_BUFFER, vertexBytes, nullptr, GL_DYNAMIC_DRAW);
-            void* mapped = glMapBufferRange(GL_ARRAY_BUFFER, 0, vertexBytes,
+            glBufferData(GL_ARRAY_BUFFER, vboSize, nullptr, GL_DYNAMIC_DRAW);
+            void* mapped = glMapBufferRange(GL_ARRAY_BUFFER, 0, vboSize,
                 GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_FLUSH_EXPLICIT_BIT);
             if (mapped)
             {
-                std::memcpy(mapped, owner.vertexData.data(), vertexBytes);
-                glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, vertexBytes);
+                std::memcpy(mapped, vertexData.data(), vboSize);
+                glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, vboSize);
                 glUnmapBuffer(GL_ARRAY_BUFFER);
             }
             else
             {
-                glBufferSubData(GL_ARRAY_BUFFER, 0, vertexBytes, owner.vertexData.data());
+                glBufferSubData(GL_ARRAY_BUFFER, 0, vboSize, vertexData.data());
             }
             persistentVboActive = false;
         }
@@ -302,18 +317,18 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
     else
     {
         // Non-persistent fallback with explicit flush where available.
-        glBufferData(GL_ARRAY_BUFFER, vertexBytes, nullptr, GL_DYNAMIC_DRAW);
-        void* mapped = glMapBufferRange(GL_ARRAY_BUFFER, 0, vertexBytes,
+        glBufferData(GL_ARRAY_BUFFER, vboSize, nullptr, GL_DYNAMIC_DRAW);
+        void* mapped = glMapBufferRange(GL_ARRAY_BUFFER, 0, vboSize,
             GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_FLUSH_EXPLICIT_BIT);
         if (mapped)
         {
-            std::memcpy(mapped, owner.vertexData.data(), vertexBytes);
-            glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, vertexBytes);
+            std::memcpy(mapped, vertexData.data(), vboSize);
+            glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, vboSize);
             glUnmapBuffer(GL_ARRAY_BUFFER);
         }
         else
         {
-            glBufferSubData(GL_ARRAY_BUFFER, 0, vertexBytes, owner.vertexData.data());
+            glBufferSubData(GL_ARRAY_BUFFER, 0, vboSize, vertexData.data());
         }
         persistentVboActive = false;
     }
@@ -331,8 +346,9 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
     // Create IBO
     glGenBuffers(1, &ibo);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(owner.indices.size() * sizeof(GLuint)), 
-                 owner.indices.data(), GL_STATIC_DRAW);
+    iboSize = indices.size() * sizeof(uint32_t);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(iboSize), 
+                 indices.data(), GL_STATIC_DRAW);
     checkForGLError();
 
     if (verboseLogging) std::cout << "buffered geometry" << std::endl;
@@ -346,21 +362,23 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
         shadowProgram = std::make_unique<GpuProgram>();
 
         // Load shadow shaders through ShaderCache.
-        auto shadowVert = VertexShader::createFromCache(depthVertShaderPath);
         auto shadowFrag = FragmentShader::createFromCache(depthFragShaderPath);
-        if (!shadowVert || !shadowFrag)
+        auto shadowVert = VertexShader::createFromCache(depthVertShaderPath);
+        if (!shadowVert || !shadowFrag || !shadowVert->isCompiled() || !shadowFrag->isCompiled())
         {
-            std::cerr << "Failed to load cached shadow shaders" << std::endl;
+            std::cerr << "Failed to load cached shadow shader" << std::endl;
             return false;
         }
         shadowProgram->attachShader(*shadowVert);
         shadowProgram->attachShader(*shadowFrag);
         glLinkProgram(shadowProgram->getId());
+        shadowProgram->getUniformLoader()->addUniform("lightSpaceMatrix", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+        shadowProgram->getUniformLoader()->addUniform("model", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
 
         // Load main shaders through ShaderCache.
         auto vertShader = VertexShader::createFromCache(mainVertShaderPath);
         auto fragShader = FragmentShader::createFromCache(mainFragShaderPath);
-        if (!vertShader || !fragShader)
+        if (!vertShader || !fragShader || !vertShader->isCompiled() || !fragShader->isCompiled())
         {
             std::cerr << "Failed to load cached main shaders" << std::endl;
             return false;
@@ -368,6 +386,20 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
         gpuProgram->attachShader(*vertShader);
         gpuProgram->attachShader(*fragShader);
         glLinkProgram(gpuProgram->getId());
+        auto* loader = gpuProgram->getUniformLoader();
+        loader->addUniform("projection", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+        loader->addUniform("view", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+        loader->addUniform("model", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+        loader->addUniform("lightSpaceMatrix", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+        loader->addUniform("lightPos", std::make_unique<UniformVec3>(glm::vec3(0.0f)));
+        loader->addUniform("viewPos", std::make_unique<UniformVec3>(glm::vec3(0.0f)));
+        loader->addUniform("diffuseTexture", std::make_unique<UniformInt>(0));
+        loader->addUniform("shadowMap", std::make_unique<UniformInt>(1));
+        loader->addUniform("normalTexture", std::make_unique<UniformInt>(2));
+        loader->addUniform("specularTexture", std::make_unique<UniformInt>(3));
+        loader->addUniform("shadows", std::make_unique<UniformInt>(1));
+        loader->addUniform("hasNormalTexture", std::make_unique<UniformInt>(0));
+        loader->addUniform("hasSpecularTexture", std::make_unique<UniformInt>(0));
 
         _checkForGLSLError(gpuProgram->getId());
         _checkForGLSLError(shadowProgram->getId());
@@ -382,35 +414,6 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
         glDeleteFramebuffers(1, &depthMapFBO);
     }
     glGenFramebuffers(1, &depthMapFBO);
-
-    // Set uniforms with smart pointers
-    // Fix: Use consistent light position matching Renderer::render() (was 0,100,0, now 10,50,0)
-    const glm::vec3 lightPos = camera.position + Math::getLightPositionOffset();
-    const glm::mat4 lightProjection = glm::ortho(
-        getConfig().getFloat("shadow.ortho.left"), getConfig().getFloat("shadow.ortho.right"),
-        getConfig().getFloat("shadow.ortho.bottom"), getConfig().getFloat("shadow.ortho.top"),
-        getConfig().getFloat("shadow.ortho.near"), getConfig().getFloat("shadow.ortho.far"));
-    const glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    const glm::mat4 lightSpaceMatrix = lightProjection * lightView;
-    const glm::mat4 identityModel(1.0f);
-
-    shadowProgram->getUniformLoader()->addUniform("lightSpaceMatrix", std::make_unique<UniformMat4>(lightSpaceMatrix));
-    shadowProgram->getUniformLoader()->addUniform("model", std::make_unique<UniformMat4>(identityModel));
-
-    gpuProgram->getUniformLoader()->addUniform("projection", std::make_unique<UniformMat4>(camera.projectionMatrix));
-    gpuProgram->getUniformLoader()->addUniform("view", std::make_unique<UniformMat4>(camera.modelViewMatrix));
-    gpuProgram->getUniformLoader()->addUniform("model", std::make_unique<UniformMat4>(identityModel));
-    gpuProgram->getUniformLoader()->addUniform("lightSpaceMatrix", std::make_unique<UniformMat4>(lightSpaceMatrix));
-    gpuProgram->getUniformLoader()->addUniform("lightPos", std::make_unique<UniformVec3>(lightPos));
-    gpuProgram->getUniformLoader()->addUniform("viewPos", std::make_unique<UniformVec3>(camera.position));
-    gpuProgram->getUniformLoader()->addUniform("diffuseTexture", std::make_unique<UniformInt>(0));
-    gpuProgram->getUniformLoader()->addUniform("shadowMap", std::make_unique<UniformInt>(1));
-    gpuProgram->getUniformLoader()->addUniform("normalTexture", std::make_unique<UniformInt>(2));
-    gpuProgram->getUniformLoader()->addUniform("specularTexture", std::make_unique<UniformInt>(3));
-    gpuProgram->getUniformLoader()->addUniform("hasNormalTexture", std::make_unique<UniformInt>(0));
-    gpuProgram->getUniformLoader()->addUniform("hasSpecularTexture", std::make_unique<UniformInt>(0));
-    GLint _shadowsVal = owner.getShadowsEnabled() ? static_cast<GLint>(1) : static_cast<GLint>(0);
-    gpuProgram->getUniformLoader()->addUniform("shadows", std::make_unique<UniformInt>(_shadowsVal));
 
     if (fallbackWhiteTexture == 0)
     {
@@ -443,10 +446,8 @@ bool OpenGLBackend::bufferToGpu(Camera& camera, std::string_view /*cacheFilename
 // Shadow Map Implementation with Cascaded Shadow Maps (CSM) Support
 // ============================================================================
 
-GLuint OpenGLBackend::createShadowMap(Camera& camera)
+void OpenGLBackend::createShadowMap(const std::vector<SceneNode>& nodes)
 {
-    (void)camera;
-
     // Create shadow map texture on first call
     if (shadowMap == 0)
     {
@@ -482,9 +483,9 @@ GLuint OpenGLBackend::createShadowMap(Camera& camera)
     glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
     glClear(GL_DEPTH_BUFFER_BIT);
 
-    if (owner.sceneNodes.empty()) return 0;
+    if (nodes.empty()) return;
 
-    glBindVertexArray(vao);
+    checkForGLError(); glBindVertexArray(vao); checkForGLError();
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
     glEnableVertexAttribArray(2);
@@ -494,13 +495,13 @@ GLuint OpenGLBackend::createShadowMap(Camera& camera)
     shadowProgram->use();
     shadowProgram->getUniformLoader()->load();
 
-    for (size_t _ni = 0; _ni < owner.sceneNodes.size(); ++_ni)
+    for (const auto& node : nodes)
     {
-        const auto& node = owner.sceneNodes[_ni];
+        if (Uniform* uniform = shadowProgram->getUniformLoader()->get("model")) { if (auto* matUniform = dynamic_cast<UniformMat4*>(uniform)) { matUniform->set(node.modelViewMatrix); matUniform->load(); } }
         const GLsizei count = static_cast<GLsizei>(node.endPosition - node.startPosition);
         if (count > 0)
         {
-            glDrawElements(node.primitiveMode, count, GL_UNSIGNED_INT,
+            checkForGLError(); glDrawElements(node.primitiveMode, count, GL_UNSIGNED_INT,
                 reinterpret_cast<const void*>(node.startPosition * sizeof(GLuint)));
         }
     }
@@ -514,14 +515,6 @@ GLuint OpenGLBackend::createShadowMap(Camera& camera)
     glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     glBindTexture(GL_TEXTURE_2D, shadowMap);
-
-    return shadowMap;
-}
-
-void OpenGLBackend::updateShadowMap(Camera& camera)
-{
-    // Create or recreate the shadow map
-    createShadowMap(camera);
 }
 
 void OpenGLBackend::fitDirectionalShadowMatrix(Camera& camera,
@@ -613,3 +606,8 @@ void OpenGLBackend::updateLightUniforms(const Camera& camera, const glm::mat4& l
         }
     }
 }
+void OpenGLBackend::getShadowMapSize(int& width, int& height) const { width = shadowWidthW; height = shadowHeightH; }
+void OpenGLBackend::beginFrame(const FrameContext&) { glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); }
+void OpenGLBackend::endFrame() { if (m_glContext) SDL_GL_SwapWindow(SDL_GL_GetCurrentWindow()); }
+
+

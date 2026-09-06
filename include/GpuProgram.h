@@ -9,6 +9,9 @@
 #include <string_view>
 
 class Uniform {
+public:
+    enum class Type { Mat4, Vec3, Int };
+    virtual Type getType() const = 0;
 protected:
     GLuint location;
 public:
@@ -23,6 +26,7 @@ private:
     glm::mat4 matrix;
 public:
     explicit UniformMat4(const glm::mat4& mat);
+    Type getType() const override { return Type::Mat4; }
     void load() override;
     void set(const glm::mat4& mat);
 };
@@ -32,6 +36,7 @@ private:
     glm::vec3 vector;
 public:
     explicit UniformVec3(const glm::vec3& vec);
+    Type getType() const override { return Type::Vec3; }
     void load() override;
     void set(const glm::vec3& vec);
 };
@@ -41,6 +46,7 @@ private:
     GLint i;
 public:
     explicit UniformInt(GLint val);
+    Type getType() const override { return Type::Int; }
     void load() override;
     void set(GLint val);
 };
@@ -52,6 +58,7 @@ class UniformLoader {
 private:
     GLuint programId;
     std::map<std::string, UniformPtr> uniforms;
+    std::vector<Uniform*> uniformVector;
 public:
     explicit UniformLoader(GLuint programId);
     ~UniformLoader();
@@ -62,6 +69,11 @@ public:
     
     void addUniform(std::string_view name, UniformPtr uniform);
     Uniform* get(std::string_view name) const;
+    
+    // Fast index-based lookup
+    size_t cacheIndex(std::string_view name);
+    Uniform* getByIndex(size_t idx) const;
+    
     void load() const;
 };
 

@@ -49,7 +49,12 @@ std::shared_ptr<Shader> ShaderCache::getShader(std::string_view filePath)
             const auto currentModified = std::filesystem::last_write_time(pathStr);
             if (currentModified == it->second.lastModified)
             {
-                return it->second.shader; // Cache hit
+                auto shader = it->second.shader;
+                if (!shader->isCompiled() && SDL_GL_GetCurrentContext() != nullptr)
+                {
+                    shader->compile();
+                }
+                return shader; // Cache hit
             }
         }
         catch (...)
@@ -90,14 +95,16 @@ std::shared_ptr<Shader> ShaderCache::compileAndCache(std::string_view filePath)
     const std::filesystem::path path(pathStr);
     const std::string ext = path.extension().string();
     
+    bool hasContext = SDL_GL_GetCurrentContext() != nullptr;
+    
     std::shared_ptr<Shader> shader;
     if (ext == ".frag" || ext == ".fs")
     {
-        shader = std::make_shared<FragmentShader>(pathStr);
+        shader = std::make_shared<FragmentShader>(pathStr, !hasContext);
     }
     else if (ext == ".vert" || ext == ".vs")
     {
-        shader = std::make_shared<VertexShader>(pathStr);
+        shader = std::make_shared<VertexShader>(pathStr, !hasContext);
     }
     else
     {
@@ -251,10 +258,17 @@ FragmentShader::FragmentShader(const char* _filePath)
     createFragmentShader();
 }
 
-FragmentShader::FragmentShader(std::string_view _filePath)
+FragmentShader::FragmentShader(std::string_view _filePath, bool deferCompile)
 {
     load(_filePath);
-    createFragmentShader();
+    if (!deferCompile)
+        createFragmentShader();
+}
+
+void FragmentShader::compile()
+{
+    if (!isCompiled())
+        createFragmentShader();
 }
 
 FragmentShader::~FragmentShader() = default;
@@ -273,9 +287,16 @@ VertexShader::VertexShader(const char* _filePath)
     createVertexShader();
 }
 
-VertexShader::VertexShader(std::string_view _filePath) : Shader(_filePath)
+VertexShader::VertexShader(std::string_view _filePath, bool deferCompile) : Shader(_filePath)
 {
-    createVertexShader();
+    if (!deferCompile)
+        createVertexShader();
+}
+
+void VertexShader::compile()
+{
+    if (!isCompiled())
+        createVertexShader();
 }
 
 VertexShader::~VertexShader() = default;

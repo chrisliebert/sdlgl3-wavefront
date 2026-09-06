@@ -154,6 +154,25 @@ bool ConfigLoader::hasVar(std::string_view key) const
     return vars.find(keyStr) != vars.end();
 }
 
+RenderBackendType ConfigLoader::getRenderBackend() const
+{
+    std::string_view backendStr = getVar("renderer.backend");
+    if (backendStr.empty()) {
+        return RenderBackendType::AUTO;
+    }
+
+    if (backendStr == "opengl") {
+        return RenderBackendType::OPENGL;
+    } else if (backendStr == "vulkan") {
+        return RenderBackendType::VULKAN;
+    } else if (backendStr == "auto") {
+        return RenderBackendType::AUTO;
+    }
+
+    std::cerr << "Invalid renderer.backend value: " << backendStr << ". Defaulting to 'auto'." << std::endl;
+    return RenderBackendType::AUTO;
+}
+
 std::ostream& operator<<(std::ostream& os, const ConfigLoader& cfg)
 {
     os << "|------- " << cfg.filename << " -------|" << std::endl;

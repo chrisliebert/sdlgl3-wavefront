@@ -113,6 +113,7 @@ private:
     mutable std::mutex sceneDataMutex;
     
     int buildCullNode(std::vector<int>& sortedIndices, int start, int end);
+    void resolveTextures();
     void rebuildScenegraph();
     void collectVisibleNodes(std::vector<int>& outVisible);
     void updateOcclusionQueryResults();
@@ -148,8 +149,6 @@ private:
     struct SortKey { GLuint textureId; GLuint startPosition; int nodeIndex; };
     std::vector<SortKey> visibleNodesSortedScratch;
     std::vector<SortKey> occlusionFilteredScratch;
-    std::unordered_map<GLuint, std::vector<SortKey>> textureBucketsScratch;
-    std::vector<GLuint> textureBucketOrderScratch;
     std::vector<RenderCommand> renderCommandsScratch;
 
     bool shadowDirty = true;

@@ -8,6 +8,13 @@
 #include <unordered_set>
 #include <mutex>
 
+enum class RenderBackendType
+{
+    AUTO,
+    OPENGL,
+    VULKAN
+};
+
 class ConfigLoader
 {
 protected:
@@ -34,6 +41,7 @@ public:
     [[nodiscard]] float getFloat(std::string_view key) const;
     [[nodiscard]] std::string_view getVar(std::string_view key) const;
     [[nodiscard]] bool hasVar(std::string_view key) const;
+    [[nodiscard]] RenderBackendType getRenderBackend() const;
     
     [[nodiscard]] std::string_view getFilename() const { return filename; }
     

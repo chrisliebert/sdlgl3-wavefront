@@ -82,6 +82,34 @@ Uniform* UniformLoader::get(std::string_view name) const
     return it->second.get();
 }
 
+size_t UniformLoader::cacheIndex(std::string_view name)
+{
+    auto it = uniforms.find(std::string(name));
+    if (it == uniforms.end()) {
+        uniformVector.push_back(nullptr);
+        return uniformVector.size() - 1;
+    }
+    
+    // Check if it's already in the vector
+    Uniform* u = it->second.get();
+    for (size_t i = 0; i < uniformVector.size(); ++i) {
+        if (uniformVector[i] == u) {
+            return i;
+        }
+    }
+    
+    uniformVector.push_back(u);
+    return uniformVector.size() - 1;
+}
+
+Uniform* UniformLoader::getByIndex(size_t idx) const
+{
+    if (idx < uniformVector.size()) {
+        return uniformVector[idx];
+    }
+    return nullptr;
+}
+
 void UniformLoader::load() const
 {
     for (const auto& [key, uniform] : uniforms) {

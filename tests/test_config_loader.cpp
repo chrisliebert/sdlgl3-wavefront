@@ -9,15 +9,16 @@
 
 // Helper to create a temporary config file
 static std::string createTempConfig(const std::string& content, const std::string& filename = "test_config.cfg") {
-    std::string path = "tests/temp_" + filename;
-    std::ofstream file(path);
+    std::filesystem::create_directories("config/tests");
+    std::string actualPath = "config/tests/temp_" + filename;
+    std::ofstream file(actualPath);
     file << content;
     file.close();
-    return path;
+    return "tests/temp_" + filename; // Return relative to config dir
 }
 
 static void cleanupTempFile(const std::string& path) {
-    std::filesystem::remove(path);
+    std::filesystem::remove("config/" + path);
 }
 
 // ============================================================================

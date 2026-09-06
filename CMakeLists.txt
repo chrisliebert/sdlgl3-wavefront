@@ -55,19 +55,8 @@ if(BUILD_VULKAN_BACKEND AND Vulkan_FOUND)
     FetchContent_MakeAvailable(vulkan-hpp)
     # The file is at ${vulkan-hpp_SOURCE_DIR}/vulkan.hpp
     # The directory to include is just ${vulkan-hpp_SOURCE_DIR}
-    get_property(VULKAN_HPP_SOURCE_DIR SOURCE PROPERTY "LOCATION" TARGET vulkan-hpp)
     set(VULKAN_HPP_INCLUDE_DIR ${vulkan-hpp_SOURCE_DIR})
 endif()
-
-# ImGui (UI Library)
-FetchContent_Declare(
-    imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.90.8
-)
-FetchContent_MakeAvailable(imgui)
-# The library target is 'imgui' after MakeAvailable
-# The include directory is ${imgui_SOURCE_DIR}
 
 # GLM (Header-only math library)
 set(GLM_SUBMODULE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/dependencies/glm")
@@ -111,6 +100,7 @@ endif()
 # --- Application ---
 
 set(APP_SOURCES
+    src/Cache.cpp
     src/Camera.cpp
     src/ConfigLoader.cpp
     src/Frustum.cpp
@@ -122,6 +112,8 @@ set(APP_SOURCES
     src/Shader.cpp
     src/PathUtil.cpp
     src/MathUtil.cpp
+    src/RenderBackendFactory.cpp
+    src/SdlGpuBackend.cpp
 )
 
 add_executable(sdlglapp ${APP_SOURCES})
@@ -135,23 +127,12 @@ target_compile_definitions(sdlglapp PRIVATE
 target_include_directories(sdlglapp PRIVATE include)
 target_include_directories(sdlglapp PRIVATE dependencies)
 target_include_directories(sdlglapp PRIVATE "${GLM_SUBMODULE_ROOT}")
-target_include_directories(sdlglapp PRIVATE "${imgui_SOURCE_DIR}")
-
-set(IMGUI_BACKEND_DIR "${imgui_SOURCE_DIR}/backends")
-list(APPEND APP_SOURCES
-    "${IMGUI_BACKEND_DIR}/imgui_impl_sdl3.cpp"
-    "${IMGUI_BACKEND_DIR}/imgui_impl_opengl3.cpp"
-)
 
 if(BUILD_VULKAN_BACKEND AND Vulkan_FOUND)
     target_include_directories(sdlglapp PRIVATE "${VULKAN_HPP_INCLUDE_DIR}")
-    list(APPEND APP_SOURCES
-        "${IMGUI_BACKEND_DIR}/imgui_impl_vulkan.cpp"
-    )
 endif()
 
 # --- Dependency Resolution ---
-list(APPEND SDL_LINK_LIBS imgui)
 if(BUILD_VULKAN_BACKEND AND Vulkan_FOUND)
     list(APPEND SDL_LINK_LIBS Vulkan::Vulkan)
 endif()
@@ -283,11 +264,33 @@ endif()
 # OpenGL
 find_package(OpenGL REQUIRED)
 
+add_library(imgui_lib STATIC
+    dependencies/imgui/imgui.cpp
+    dependencies/imgui/imgui_draw.cpp
+    dependencies/imgui/imgui_tables.cpp
+    dependencies/imgui/imgui_widgets.cpp
+    dependencies/imgui/backends/imgui_impl_sdl3.cpp
+    dependencies/imgui/backends/imgui_impl_opengl3.cpp
+)
+
+target_include_directories(imgui_lib PUBLIC
+    dependencies/imgui
+    dependencies/imgui/backends
+)
+
+
+
+target_link_libraries(imgui_lib PUBLIC
+    ${SDL_LINK_LIBS}
+    OpenGL::GL
+)
+
 # Link all libraries
 target_link_libraries(sdlglapp PRIVATE
     ${GLAD_LINK_TARGET}
     OpenGL::GL
     ${SDL_LINK_LIBS}
+    imgui_lib
 )
 
 # Copy models and configs to build directory

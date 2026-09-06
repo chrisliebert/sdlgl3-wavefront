@@ -4,6 +4,7 @@
 #include "ConfigLoader.h"
 #include "Renderer.h"
 #include "OpenGLBackend.h"
+#include "RenderBackendFactory.h"
 #include <array>
 #include <filesystem>
 #include <memory>
@@ -91,9 +92,8 @@ public:
 private:
     SDL_Window* window = nullptr;
     std::unique_ptr<Renderer> renderer;
+    std::unique_ptr<ConfigLoader> appConfig;
     std::unique_ptr<Camera> camera;
-    std::unique_ptr<ConfigLoader> configLoader;
-    SDL_GLContext glContext = nullptr;
     SDL_Event event{};
     void* sceneLoaderThread = nullptr;
 
@@ -139,6 +139,8 @@ void MyGLApp::errorMsg(std::string_view title)
 MyGLApp::MyGLApp(std::string_view filename)
 {
     renderer = std::make_unique<Renderer>();
+    appConfig = std::make_unique<ConfigLoader>("app.cfg");
+    
     startup(filename);
     sceneLoaded.store(false, std::memory_order_release);
 }
@@ -161,12 +163,6 @@ void MyGLApp::shutdown()
     }
 
     renderer.reset();
-
-    if (glContext != nullptr)
-    {
-        SDL_GL_DeleteContext(glContext);
-        glContext = nullptr;
-    }
 
     if (window != nullptr)
     {
@@ -260,126 +256,42 @@ static int LoadScene(void* appPtr)
 
 bool MyGLApp::startup(std::string_view filename)
 {
-    configLoader = std::make_unique<ConfigLoader>("app.cfg");
-    speed = configLoader->getFloat("camera.speed");
-    mouseSpeed = configLoader->getFloat("mouse.speed");
-    windowGrab = configLoader->getBool("window.grab");
-    showCursor = configLoader->getBool("mouse.show");
+    speed = appConfig->getFloat("camera.speed");
+    mouseSpeed = appConfig->getFloat("mouse.speed");
+    windowGrab = appConfig->getBool("window.grab");
+    showCursor = appConfig->getBool("mouse.show");
     runLevel = 1;
     lastTimeNs = SDL_GetTicksNS();
     modelFilename = std::string(filename);
     sceneLoaderThread = nullptr;
     sceneLoaded.store(false, std::memory_order_release);
-    useBinCache = configLoader->getBool("useBinObjCache");
+    useBinCache = appConfig->getBool("useBinObjCache");
 
-    Uint32 sdlInitFlags = SDL_INIT_VIDEO | SDL_INIT_EVENTS;
-
-    if (!SDL_Init(sdlInitFlags))
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
     {
         std::cerr << "Unable to initialize SDL: " << SDL_GetError() << std::endl;
-        runLevel = 0;
         return false;
     }
     sdlInitialized = true;
 
-    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    std::unique_ptr<IRenderBackend> backend = RenderBackendFactory::createBackend(*renderer, *appConfig, window);
 
-    if (configLoader->hasVar("window.multiSampleBuffers"))
-    {
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, configLoader->getInt("window.numMultiSampleBuffers"));
-    }
-
-    SDL_WindowFlags flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_OPENGL);
-    flags = static_cast<SDL_WindowFlags>(flags | SDL_WINDOW_SHOWN);
-
-    const int windowWidth = configLoader->hasVar("window.width") ? configLoader->getInt("window.width") : 1280;
-    const int windowHeight = configLoader->hasVar("window.height") ? configLoader->getInt("window.height") : 720;
-    const bool hasWindowPosition = configLoader->hasVar("window.position.x") && configLoader->hasVar("window.position.y");
-
-    if (configLoader->getBool("window.fullscreen"))
-        flags |= SDL_WINDOW_FULLSCREEN;
-
-    window = SDL_CreateWindow("Loading",
-        windowWidth,
-        windowHeight,
-        flags);
-    if (window != nullptr && hasWindowPosition)
-    {
-        SDL_SetWindowPosition(window,
-            configLoader->getInt("window.position.x"),
-            configLoader->getInt("window.position.y"));
-    }
-
-    if (window == nullptr)
-    {
-        fprintf(stderr, "Unable to create window: %s\n", SDL_GetError());
-        errorMsg("Unable to create window");
-        runLevel = 0;
+    if (window == nullptr || backend == nullptr) {
+        std::cerr << "Failed to create window or backend." << std::endl;
         return false;
     }
 
-    if (configLoader->getBool("window.hide"))
+    if (!backend->initialize(window)) {
+        std::cerr << "Failed to initialize backend." << std::endl;
+        return false;
+    }
+
+    renderer->setBackend(std::move(backend));
+
+    if (appConfig->getBool("window.hide"))
         SDL_HideWindow(window);
 
-    struct GlContextVersion { int major; int minor; };
-    constexpr std::array<GlContextVersion, 4> candidates = {{
-        {4, 6}, {4, 5}, {4, 3}, {3, 3}
-    }};
-
-    glContext = nullptr;
-    for (const auto& candidate : candidates)
-    {
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, candidate.major);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, candidate.minor);
-        glContext = SDL_GL_CreateContext(window);
-        if (glContext != nullptr)
-        {
-            std::cout << "Requested OpenGL " << candidate.major << "." << candidate.minor << " core context" << std::endl;
-            break;
-        }
-    }
-
-    if (glContext == nullptr)
-    {
-        errorMsg("Unable to create OpenGL context");
-        errorMsg(SDL_GetError());
-        runLevel = 0;
-        return false;
-    }
-
-    SDL_GL_SetSwapInterval(0);
-
-    if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress)))
-    {
-        std::cerr << "Something went wrong initializing GLAD!" << std::endl;
-        runLevel = 0;
-        return false;
-    }
-
-#ifdef GLAD_DEBUG
-    glad_set_pre_callback(pre_gl_call);
-    glad_debug_glClear = glad_glClear;
-#endif
-
-    std::cout << "OpenGL " << GLVersion.major << "." << GLVersion.minor << std::endl;
-    if (GLVersion.major < 3 || (GLVersion.major == 3 && GLVersion.minor < 3))
-    {
-        std::cerr << "Your system doesn't support OpenGL >= 3.3 core features!" << std::endl;
-        runLevel = 0;
-        return false;
-    }
-
-    std::cout << "OpenGL " << glGetString(GL_VERSION) << " GLSL " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
-
-    checkForGLError();
-
-    if (configLoader->getBool("window.grab"))
+    if (appConfig->getBool("window.grab"))
     {
         SDL_SetWindowMouseGrab(window, SDL_TRUE);
         SDL_SetWindowRelativeMouseMode(window, SDL_TRUE);
@@ -390,31 +302,17 @@ bool MyGLApp::startup(std::string_view filename)
         SDL_HideCursor();
     }
 
-    checkForGLError();
-    glEnable(GL_DEPTH_TEST);
-    checkForGLError();
-    glDepthFunc(GL_LESS);
-
-    if (configLoader->getBool("cullFace"))
-        glEnable(GL_CULL_FACE);
-    else
-        glDisable(GL_CULL_FACE);
-    checkForGLError();
-
     camera = std::make_unique<Camera>();
-    if (configLoader->hasVar("camera.position.x")) camera->position.x = configLoader->getFloat("camera.position.x");
-    if (configLoader->hasVar("camera.position.y")) camera->position.y = configLoader->getFloat("camera.position.y");
-    if (configLoader->hasVar("camera.position.z")) camera->position.z = configLoader->getFloat("camera.position.z");
-
-    auto backend = std::make_unique<OpenGLBackend>(*renderer);
-    backend->initialize(window);
-    renderer->setBackend(std::move(backend));
+    if (appConfig->hasVar("camera.position.x")) camera->position.x = appConfig->getFloat("camera.position.x");
+    if (appConfig->hasVar("camera.position.y")) camera->position.y = appConfig->getFloat("camera.position.y");
+    if (appConfig->hasVar("camera.position.z")) camera->position.z = appConfig->getFloat("camera.position.z");
 
     sceneLoaderThread = SDL_CreateThread(LoadScene, "MainLoadSceneThread", this);
 
     GLint viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     glViewport(0, 0, viewport[2], viewport[3]);
+
 
     return runLevel > 0;
 }
@@ -627,17 +525,17 @@ void MyGLApp::update(const FrameContext& frameContext)
 
 void MyGLApp::start()
 {
-    if (runLevel <= 0 || !camera || !configLoader) return;
+    if (runLevel <= 0 || !camera || !appConfig) return;
 
     GLint viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
 
-    const float groundLevel = configLoader->getFloat("ground.level");
+    const float groundLevel = appConfig->getFloat("ground.level");
     bool sceneFinishedLoading = false;
-    const bool closeOnLoad = configLoader->getBool("closeOnLoad");
+    const bool closeOnLoad = appConfig->getBool("closeOnLoad");
     Uint64 lastHudUpdateCounter = 0;
     constexpr Uint64 hudUpdateIntervalNs = 250000000ULL;
-    std::string baseTitle(std::string(configLoader->getVar("window.title")));
+    std::string baseTitle(std::string(appConfig->getVar("window.title")));
 
     while (runLevel > 0)
     {
@@ -722,7 +620,7 @@ void MyGLApp::start()
                 std::vector<unsigned char> pixels(captureWidth * captureHeight * 3);
 
                 // Read the rendered frame from the back buffer before swap.
-                glReadBuffer(GL_BACK);
+                glReadBuffer(GL_FRONT);
                 glReadPixels(0, 0, captureWidth, captureHeight, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
 
                 // Write as binary PPM (portable, no external image library required).

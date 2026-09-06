@@ -91,6 +91,9 @@ public:
     void load(const char* _filePath);
     void load(std::string_view _filePath);
     [[nodiscard]] GLuint getId() const noexcept;
+    [[nodiscard]] bool isCompiled() const { return id != 0; }
+    
+    virtual void compile() {}
     
     // Use shader caching for production code
     static std::shared_ptr<Shader> createFromCache(std::string_view filePath);
@@ -105,10 +108,12 @@ class FragmentShader : public Shader
 {
 public:
     FragmentShader(const char* _filePath);
-    FragmentShader(std::string_view _filePath);
+    FragmentShader(std::string_view _filePath, bool deferCompile = false);
     ~FragmentShader();
     
     static std::shared_ptr<FragmentShader> createFromCache(std::string_view filePath);
+    
+    void compile() override;
     
 protected:
     void createFragmentShader();
@@ -118,10 +123,12 @@ class VertexShader : public Shader
 {
 public:
     VertexShader(const char* _filePath);
-    VertexShader(std::string_view _filePath);
+    VertexShader(std::string_view _filePath, bool deferCompile = false);
     ~VertexShader();
     
     static std::shared_ptr<VertexShader> createFromCache(std::string_view filePath);
+    
+    void compile() override;
     
 protected:
     void createVertexShader();

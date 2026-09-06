@@ -3,11 +3,13 @@
 
 #include "RenderBackend.h"
 #include "GpuProgram.h"
+#include "Capture.h"
 #include <memory>
 #include <vector>
 
 // Forward declarations
-class SceneNode;
+struct Camera;
+struct SceneNode;
 class ConfigLoader;
 struct SDL_Window;
 
@@ -17,15 +19,15 @@ struct SDL_Window;
  */
 class OpenGLBackend : public IRenderBackend {
 public:
-    OpenGLBackend();
+    explicit OpenGLBackend(class Renderer& renderer);
     ~OpenGLBackend() override;
 
     // IRenderBackend interface implementation
-    bool initialize(SDL_Window* window, ConfigLoader& configLoader) override;
+    bool initialize(SDL_Window* window) override;
     void shutdown() override;
-    void render(const std::vector<SceneNode*>& nodes) override;
-    bool bufferToGpu(const std::vector<SceneNode*>& nodes) override;
-    void createShadowMap() override;
+    void submit(const std::vector<RenderCommand>& commands) override;
+    bool bufferToGpu(const std::vector<struct Vertex>& vertexData, const std::vector<uint32_t>& indices) override;
+    void createShadowMap(const std::vector<struct SceneNode>& nodes) override;
 
     // UI Rendering
     void initUIRendering() override;
@@ -33,9 +35,23 @@ public:
     void beginUIRender() override;
     void endUIRender() override;
 
+    // Frame capture
+    std::unique_ptr<Capture::Frame> captureFrame() override;
+
+    void fitDirectionalShadowMatrix(Camera& camera, const glm::vec3& lightPosition, int shadowWidth, int shadowHeight, glm::mat4& lightView, glm::mat4& lightProjection, glm::mat4& lightSpaceMatrix) override;
+    void updateLightUniforms(const Camera& camera, const glm::mat4& lightSpaceMatrix, const glm::vec3& lightPos) override;
+    void getShadowMapSize(int& width, int& height) const override;
+    void beginFrame(const struct FrameContext& frameContext) override;
+    void endFrame() override;
+
+
 private:
+    Renderer& owner;
     SDL_Window* m_window = nullptr;
-    ConfigLoader* m_configLoader = nullptr;
+    SDL_GLContext m_glContext = nullptr;
+
+    ConfigLoader& getConfig();
+
 
     // VBO configuration
     bool usePersistentMappedVbo = false;
@@ -44,11 +60,24 @@ private:
 
     // OpenGL resource handles
     GLuint vao = 0, vbo = 0, ibo = 0;
+    size_t vboSize = 0;
+    size_t iboSize = 0;
     GLuint shadowMap = 0, depthMapFBO = 0;
     GLuint fallbackWhiteTexture = 0;
     GLuint fallbackNormalTexture = 0;
     std::unique_ptr<GpuProgram> gpuProgram;
     std::unique_ptr<GpuProgram> shadowProgram;
+    
+    // Cached uniform indices
+    size_t uniformProj = static_cast<size_t>(-1);
+    size_t uniformView = static_cast<size_t>(-1);
+    size_t uniformViewPos = static_cast<size_t>(-1);
+    size_t uniformLightSpace = static_cast<size_t>(-1);
+    size_t uniformLightPos = static_cast<size_t>(-1);
+    size_t uniformHasNormal = static_cast<size_t>(-1);
+    size_t uniformHasSpecular = static_cast<size_t>(-1);
+    size_t shadowUniformLightSpace = static_cast<size_t>(-1);
+
     int shadowWidthW = 2048;
     int shadowHeightH = 2048;
     bool verboseLogging = false;
@@ -61,6 +90,10 @@ private:
     float clearG = 0.8f;
     float clearB = 0.8f;
     float clearA = 1.0f;
+
+    std::vector<RenderCommand> lastSubmittedCommands;
+    GLuint m_prevVAO = 0;
+    GLsync m_vboFence = nullptr;
 };
 
 #endif // _OPENGL_BACKEND_H_

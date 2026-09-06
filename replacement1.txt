@@ -1,0 +1,6 @@
+        glLinkProgram(shadowProgram->getId());
+
+        shadowProgram->getUniformLoader()->addUniform("lightSpaceMatrix", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+        shadowProgram->getUniformLoader()->addUniform("model", std::make_unique<UniformMat4>(glm::mat4(1.0f)));
+
+        // Load main shaders through ShaderCache.
