@@ -15,6 +15,8 @@
 #include <unordered_map>
 #include <mutex>
 #include <atomic>
+#include <string>
+#include <array>
 
 #if __has_include(<SDL3_image/SDL_image.h>)
 #include <SDL3_image/SDL_image.h>
@@ -116,6 +118,8 @@ private:
     
     int buildCullNode(std::vector<int>& sortedIndices, int start, int end);
     void resolveTextures();
+    bool applyCachedDiffuseTextureAtlas(std::vector<Vertex>& remappedVertexData, GLuint& atlasTextureId, size_t& remappedNodeCount);
+    bool buildDiffuseTextureAtlas(std::vector<Vertex>& remappedVertexData, GLuint& atlasTextureId, size_t& remappedNodeCount);
     void rebuildScenegraph();
     void collectVisibleNodes(std::vector<int>& outVisible);
     void updateOcclusionQueryResults();
@@ -154,6 +158,15 @@ private:
     std::vector<SortKey> visibleNodesSortedScratch;
     std::vector<SortKey> occlusionFilteredScratch;
     std::vector<RenderCommand> renderCommandsScratch;
+    std::vector<std::string> nodeDiffuseTextureKeys;
+    std::map<std::string, std::array<uint32_t, 4>> atlasRectByTextureKey;
+    uint32_t atlasCachedWidth = 0;
+    uint32_t atlasCachedHeight = 0;
+    std::string atlasTextureCacheKey = "__atlas_diffuse__";
+
+    bool textureAtlasEnabled = true;
+    int textureAtlasMaxSize = 2048;
+    int textureAtlasPadding = 2;
 
     bool shadowDirty = true;
     bool shadowInitialized = false;

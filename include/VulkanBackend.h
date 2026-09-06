@@ -2,6 +2,9 @@
 
 #include "RenderBackend.h"
 #include <glm/glm.hpp>
+#include <cstdint>
+#include <string>
+#include <unordered_map>
 
 #ifdef HAVE_VULKAN
 #include <vulkan/vulkan.h>
@@ -90,10 +93,38 @@ private:
 
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     std::vector<vkhelpers::VulkanTexture> m_textures;
-    
+    VkSampler m_sharedSampler = VK_NULL_HANDLE;
+
+    struct TextureCacheKey {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t mipLevels = 1;
+        uint64_t pixelHash = 0;
+
+        bool operator==(const TextureCacheKey& other) const {
+            return width == other.width &&
+                   height == other.height &&
+                   mipLevels == other.mipLevels &&
+                   pixelHash == other.pixelHash;
+        }
+    };
+
+    struct TextureCacheKeyHasher {
+        size_t operator()(const TextureCacheKey& key) const noexcept {
+            const size_t h1 = std::hash<uint32_t>{}(key.width);
+            const size_t h2 = std::hash<uint32_t>{}(key.height);
+            const size_t h3 = std::hash<uint32_t>{}(key.mipLevels);
+            const size_t h4 = std::hash<uint64_t>{}(key.pixelHash);
+            return (((h1 * 1315423911u) ^ (h2 << 1)) ^ (h3 << 2)) ^ (h4 << 3);
+        }
+    };
+
+    std::unordered_map<TextureCacheKey, GLuint, TextureCacheKeyHasher> m_textureCache;
+
     uint32_t m_imageIndex = 0;
     bool m_frameReady = false;
-    
+
+    VkSampler getOrCreateSharedSampler(uint32_t mipLevels);
     void createInstance();
     void pickPhysicalDevice();
     void createLogicalDevice();

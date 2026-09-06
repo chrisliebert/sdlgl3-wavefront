@@ -13,7 +13,8 @@ namespace Cache {
 constexpr uint32_t CACHE_MAGIC = 0x57415643; // 'CVAW'
 // Current version of the cache file format. Increment on breaking changes.
 // Version 1: Initial chunked schema
-constexpr uint32_t CACHE_VERSION = 1;
+// Version 2: Adds TEXTURE_ATLAS_RECTS metadata chunk for atlas UV remap reuse
+constexpr uint32_t CACHE_VERSION = 2;
 
 enum class ChunkType : uint32_t {
     UNKNOWN = 0,
@@ -22,6 +23,7 @@ enum class ChunkType : uint32_t {
     VERTEX_DATA,
     TEXTURE_INVENTORY,
     TEXTURE_ATLAS_PIXELS,
+    TEXTURE_ATLAS_RECTS,
     // Add other chunk types as needed
 };
 
@@ -52,6 +54,16 @@ struct TextureInventoryEntry {
     uint32_t width;
     uint32_t height;
     uint32_t bpp; // bytes per pixel
+};
+
+struct TextureAtlasRectEntry {
+    char textureKey[256];
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+    uint32_t atlasWidth;
+    uint32_t atlasHeight;
 };
 
 } // namespace Cache

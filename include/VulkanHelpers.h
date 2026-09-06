@@ -76,7 +76,16 @@ inline void copyBuffer(VkDevice device, VkCommandPool commandPool, VkQueue graph
     endSingleTimeCommands(device, commandPool, graphicsQueue, commandBuffer);
 }
 
-inline void transitionImageLayout(VkDevice device, VkCommandPool commandPool, VkQueue graphicsQueue, VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
+inline void transitionImageLayout(
+    VkDevice device,
+    VkCommandPool commandPool,
+    VkQueue graphicsQueue,
+    VkImage image,
+    VkFormat format,
+    VkImageLayout oldLayout,
+    VkImageLayout newLayout,
+    uint32_t mipLevels = 1) {
+    (void)format;
     VkCommandBuffer commandBuffer = beginSingleTimeCommands(device, commandPool);
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -87,10 +96,10 @@ inline void transitionImageLayout(VkDevice device, VkCommandPool commandPool, Vk
     barrier.image = image;
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.levelCount = mipLevels;
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.layerCount = 1;
-    barrier.srcAccessMask = 0; 
+    barrier.srcAccessMask = 0;
     barrier.dstAccessMask = 0;
     VkPipelineStageFlags sourceStage;
     VkPipelineStageFlags destinationStage;

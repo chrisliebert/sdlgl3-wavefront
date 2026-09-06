@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <cmath>
 
 
 
@@ -38,6 +39,11 @@ Renderer::Renderer()
     occlusionRetestFrames = configLoader->hasVar("renderer.culling.occlusionRetestFrames") ? configLoader->getInt("renderer.culling.occlusionRetestFrames") : 8;
     occlusionMinSamples = configLoader->hasVar("renderer.culling.occlusionMinSamples") ? configLoader->getInt("renderer.culling.occlusionMinSamples") : 1;
     frustumCullingEnabled = configLoader->hasVar("renderer.culling.frustum") ? configLoader->getBool("renderer.culling.frustum") : true;
+    textureAtlasEnabled = configLoader->hasVar("renderer.textureAtlas.enabled") ? configLoader->getBool("renderer.textureAtlas.enabled") : true;
+    textureAtlasMaxSize = configLoader->hasVar("renderer.textureAtlas.maxSize") ? configLoader->getInt("renderer.textureAtlas.maxSize") : 4096;
+    textureAtlasPadding = configLoader->hasVar("renderer.textureAtlas.padding") ? configLoader->getInt("renderer.textureAtlas.padding") : 2;
+    if (textureAtlasMaxSize < 256) textureAtlasMaxSize = 256;
+    if (textureAtlasPadding < 0) textureAtlasPadding = 0;
 
 }
 
@@ -793,6 +799,17 @@ int Renderer::createBinCacheInternal()
         descriptors.push_back({Cache::ChunkType::TEXTURE_INVENTORY, Cache::CACHE_VERSION, 0, inventorySize});
         descriptors.push_back({Cache::ChunkType::TEXTURE_ATLAS_PIXELS, Cache::CACHE_VERSION, 0, pixelsSize});
     }
+    if (!atlasRectByTextureKey.empty() && atlasCachedWidth > 0 && atlasCachedHeight > 0)
+    {
+        std::cout << "[CACHE] Storing atlas metadata: " << atlasRectByTextureKey.size() << " rects, "
+                  << atlasCachedWidth << "x" << atlasCachedHeight << std::endl;
+        descriptors.push_back({
+            Cache::ChunkType::TEXTURE_ATLAS_RECTS,
+            Cache::CACHE_VERSION,
+            0,
+            atlasRectByTextureKey.size() * sizeof(Cache::TextureAtlasRectEntry)
+        });
+    }
     
     // Update header with number of chunks
     header.numChunks = static_cast<uint32_t>(descriptors.size());
@@ -876,6 +893,20 @@ int Renderer::createBinCacheInternal()
                     size_t dataSize = static_cast<size_t>(texture->width) * texture->height * texture->bpp;
                     binFile.write(reinterpret_cast<const char*>(texture->data.get()), static_cast<std::streamsize>(dataSize));
                 }
+            }
+        } else if (desc.type == Cache::ChunkType::TEXTURE_ATLAS_RECTS) {
+            for (const auto& [key, rect] : atlasRectByTextureKey)
+            {
+                Cache::TextureAtlasRectEntry entry{};
+                std::strncpy(entry.textureKey, key.c_str(), sizeof(entry.textureKey) - 1);
+                entry.textureKey[sizeof(entry.textureKey) - 1] = '\0';
+                entry.x = rect[0];
+                entry.y = rect[1];
+                entry.width = rect[2];
+                entry.height = rect[3];
+                entry.atlasWidth = atlasCachedWidth;
+                entry.atlasHeight = atlasCachedHeight;
+                binFile.write(reinterpret_cast<const char*>(&entry), sizeof(entry));
             }
         }
     }
@@ -966,6 +997,9 @@ bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
         vertexData.clear();
         indices.clear();
         textures.clear();
+        atlasRectByTextureKey.clear();
+        atlasCachedWidth = 0;
+        atlasCachedHeight = 0;
     };
 
     const auto failLoad = [&](const char* message) {
@@ -1009,7 +1043,7 @@ bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
             return failLoad("Unable to read cache header");
         }
 
-        if (header.magic != Cache::CACHE_MAGIC || header.version != Cache::CACHE_VERSION)
+        if (header.magic != Cache::CACHE_MAGIC || (header.version != 1 && header.version != Cache::CACHE_VERSION))
         {
             std::cerr << "Incompatible cache format: expected v" << Cache::CACHE_VERSION
                       << ", got v" << header.version << std::endl;
@@ -1033,8 +1067,22 @@ bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
             }
 
             if (desc.type == Cache::ChunkType::MATERIALS) {
+                const size_t serializedMaterialSize =
+                    sizeof(Material::name) +
+                    sizeof(Material::ambient) +
+                    sizeof(Material::diffuse) +
+                    sizeof(Material::specular) +
+                    sizeof(Material::transmittance) +
+                    sizeof(Material::emission) +
+                    sizeof(Material::shininess) +
+                    sizeof(Material::ior) +
+                    sizeof(Material::dissolve) +
+                    sizeof(Material::illum) +
+                    sizeof(Material::diffuseTexName) +
+                    sizeof(Material::normalTexName) +
+                    sizeof(Material::specularTexName);
                 constexpr size_t kMaxMaterialCount = 100000;
-                size_t numMaterials = desc.size / sizeof(Material);
+                size_t numMaterials = serializedMaterialSize == 0 ? 0 : (desc.size / serializedMaterialSize);
                 if (numMaterials > kMaxMaterialCount) {
                     return failLoad("Cache material count is too large");
                 }
@@ -1066,7 +1114,6 @@ bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
                     }
                 }
             } else if (desc.type == Cache::ChunkType::SCENE_NODES) {
-                constexpr size_t kMaxSceneNodeCount = 100000;
                 constexpr size_t kMaxNodeVertexCount = 50000000;
                 size_t bytesRead = 0;
                 while (bytesRead < desc.size) {
@@ -1182,6 +1229,26 @@ bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
                 if (pixelsRead != desc.size) {
                     return failLoad("Mismatch between reported texture pixel chunk size and data read.");
                 }
+            } else if (desc.type == Cache::ChunkType::TEXTURE_ATLAS_RECTS) {
+                const size_t numRects = desc.size / sizeof(Cache::TextureAtlasRectEntry);
+                std::cout << "[CACHE] Loading atlas metadata: " << numRects << " rects" << std::endl;
+                for (size_t i = 0; i < numRects; ++i)
+                {
+                    Cache::TextureAtlasRectEntry entry{};
+                    if (!readExact(&entry, sizeof(entry)))
+                    {
+                        return failLoad("Cache file ended while reading atlas rect metadata");
+                    }
+                    entry.textureKey[sizeof(entry.textureKey) - 1] = '\0';
+                    if (entry.textureKey[0] == '\0')
+                    {
+                        continue;
+                    }
+                    atlasRectByTextureKey[std::string(entry.textureKey)] = {entry.x, entry.y, entry.width, entry.height};
+                    atlasCachedWidth = entry.atlasWidth;
+                    atlasCachedHeight = entry.atlasHeight;
+                }
+                std::cout << "[CACHE] Restored atlas: " << atlasCachedWidth << "x" << atlasCachedHeight << ", rects=" << numRects << std::endl;
             }
         }
     }
@@ -1203,10 +1270,12 @@ bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
 
 void Renderer::resolveTextures()
 {
+    nodeDiffuseTextureKeys.assign(sceneNodes.size(), std::string());
     std::map<std::string, GLuint> generatedMaterialColorTextures;
 
-    for (auto& node : sceneNodes)
+    for (size_t nodeIndex = 0; nodeIndex < sceneNodes.size(); ++nodeIndex)
     {
+        auto& node = sceneNodes[nodeIndex];
         if (node.material[0] == '\0') continue;
         
         std::string materialName(node.material);
@@ -1218,6 +1287,7 @@ void Renderer::resolveTextures()
             if (mat.hasDiffuseTexture())
             {
                 addTexture(mat.diffuseTexName, &node.diffuseTextureId);
+                nodeDiffuseTextureKeys[nodeIndex] = std::string(mat.diffuseTexName);
             }
             else
             {
@@ -1225,6 +1295,7 @@ void Renderer::resolveTextures()
                 if (cached != generatedMaterialColorTextures.end())
                 {
                     node.diffuseTextureId = cached->second;
+                    nodeDiffuseTextureKeys[nodeIndex] = std::string("__material_color__") + materialName;
                 }
                 else
                 {
@@ -1252,6 +1323,7 @@ void Renderer::resolveTextures()
                     addTexture(generatedTextureKey, &generatedId, materialTexture.get());
                     node.diffuseTextureId = generatedId;
                     generatedMaterialColorTextures.emplace(materialName, generatedId);
+                    nodeDiffuseTextureKeys[nodeIndex] = generatedTextureKey;
                 }
             }
             if (mat.normalTexName[0] != '\0')
@@ -1266,10 +1338,349 @@ void Renderer::resolveTextures()
     }
 }
 
+bool Renderer::applyCachedDiffuseTextureAtlas(std::vector<Vertex>& remappedVertexData, GLuint& atlasTextureId, size_t& remappedNodeCount)
+{
+    atlasTextureId = 0;
+    remappedNodeCount = 0;
+
+    if (!textureAtlasEnabled || !backend) return false;
+    if (atlasRectByTextureKey.empty() || atlasCachedWidth == 0 || atlasCachedHeight == 0) return false;
+    if (sceneNodes.empty() || vertexData.empty() || nodeDiffuseTextureKeys.empty()) return false;
+
+    auto atlasIt = textures.find(atlasTextureCacheKey);
+    if (atlasIt == textures.end() || !atlasIt->second || !atlasIt->second->isValid())
+    {
+        return false;
+    }
+
+    GLuint cachedAtlasTextureId = 0;
+    addTexture(atlasTextureCacheKey, &cachedAtlasTextureId, atlasIt->second.get());
+    if (cachedAtlasTextureId == 0)
+    {
+        return false;
+    }
+
+    std::vector<Vertex> candidateVertexData = vertexData;
+    std::vector<GLuint> candidateDiffuseIds(sceneNodes.size(), 0);
+
+    for (size_t nodeIndex = 0; nodeIndex < sceneNodes.size(); ++nodeIndex)
+    {
+        const SceneNode& node = sceneNodes[nodeIndex];
+        const std::string& key = nodeDiffuseTextureKeys[nodeIndex];
+        if (key.empty()) continue;
+
+        const auto rectIt = atlasRectByTextureKey.find(key);
+        if (rectIt == atlasRectByTextureKey.end()) continue;
+
+        const auto& rect = rectIt->second;
+        if (rect[2] == 0 || rect[3] == 0) continue;
+
+        const float uMin = static_cast<float>(rect[0]) / static_cast<float>(atlasCachedWidth);
+        const float vMin = static_cast<float>(rect[1]) / static_cast<float>(atlasCachedHeight);
+        const float uScale = static_cast<float>(rect[2]) / static_cast<float>(atlasCachedWidth);
+        const float vScale = static_cast<float>(rect[3]) / static_cast<float>(atlasCachedHeight);
+
+        const size_t start = static_cast<size_t>(node.startPosition);
+        const size_t end = static_cast<size_t>(node.endPosition);
+        if (start >= candidateVertexData.size() || end > candidateVertexData.size() || start >= end) continue;
+
+        for (size_t i = start; i < end; ++i)
+        {
+            float u = candidateVertexData[i].textureCoordinate[0];
+            float v = candidateVertexData[i].textureCoordinate[1];
+            u = u - std::floor(u);
+            v = v - std::floor(v);
+            candidateVertexData[i].textureCoordinate[0] = uMin + (u * uScale);
+            candidateVertexData[i].textureCoordinate[1] = vMin + (v * vScale);
+        }
+
+        candidateDiffuseIds[nodeIndex] = 1;
+        ++remappedNodeCount;
+    }
+
+    if (remappedNodeCount == 0)
+    {
+        return false;
+    }
+
+    remappedVertexData.swap(candidateVertexData);
+    for (size_t nodeIndex = 0; nodeIndex < sceneNodes.size(); ++nodeIndex)
+    {
+        if (candidateDiffuseIds[nodeIndex] != 0)
+        {
+            sceneNodes[nodeIndex].diffuseTextureId = cachedAtlasTextureId;
+        }
+    }
+
+    atlasTextureId = cachedAtlasTextureId;
+    std::cout << "[ATLAS] Restored from cache: remapped nodes=" << remappedNodeCount
+              << ", atlas=" << atlasCachedWidth << "x" << atlasCachedHeight << std::endl;
+    return true;
+}
+
+bool Renderer::buildDiffuseTextureAtlas(std::vector<Vertex>& remappedVertexData, GLuint& atlasTextureId, size_t& remappedNodeCount)
+{
+    atlasTextureId = 0;
+    remappedNodeCount = 0;
+    if (!textureAtlasEnabled || !backend) return false;
+    if (sceneNodes.empty() || vertexData.empty() || nodeDiffuseTextureKeys.empty()) return false;
+
+    struct AtlasInput {
+        std::string key;
+        std::shared_ptr<Texture> texture;
+        int width = 0;
+        int height = 0;
+    };
+    std::vector<AtlasInput> atlasInputs;
+    atlasInputs.reserve(nodeDiffuseTextureKeys.size());
+
+    std::map<std::string, size_t> inputByKey;
+    for (const std::string& key : nodeDiffuseTextureKeys)
+    {
+        if (key.empty()) continue;
+        if (inputByKey.find(key) != inputByKey.end()) continue;
+        auto texIt = textures.find(key);
+        if (texIt == textures.end() || !texIt->second || !texIt->second->isValid()) continue;
+        AtlasInput in;
+        in.key = key;
+        in.texture = texIt->second;
+        in.width = static_cast<int>(texIt->second->width);
+        in.height = static_cast<int>(texIt->second->height);
+        if (in.width <= 0 || in.height <= 0) continue;
+        inputByKey.emplace(in.key, atlasInputs.size());
+        atlasInputs.push_back(std::move(in));
+    }
+
+    if (atlasInputs.size() < 2)
+    {
+        return false;
+    }
+
+    std::sort(atlasInputs.begin(), atlasInputs.end(), [](const AtlasInput& a, const AtlasInput& b) {
+        if (a.height != b.height) return a.height > b.height;
+        return a.width > b.width;
+    });
+
+    struct AtlasRect { int x; int y; int w; int h; };
+    std::map<std::string, AtlasRect> rectByKey;
+    int atlasW = 0;
+    int atlasH = 0;
+    int x = textureAtlasPadding;
+    int y = textureAtlasPadding;
+    int rowH = 0;
+
+    for (const auto& input : atlasInputs)
+    {
+        if (input.width + textureAtlasPadding * 2 > textureAtlasMaxSize ||
+            input.height + textureAtlasPadding * 2 > textureAtlasMaxSize)
+        {
+            continue;
+        }
+
+        if (x + input.width + textureAtlasPadding > textureAtlasMaxSize)
+        {
+            x = textureAtlasPadding;
+            y += rowH + textureAtlasPadding;
+            rowH = 0;
+        }
+
+        if (y + input.height + textureAtlasPadding > textureAtlasMaxSize)
+        {
+            continue;
+        }
+
+        rectByKey[input.key] = AtlasRect{x, y, input.width, input.height};
+        x += input.width + textureAtlasPadding;
+        rowH = std::max(rowH, input.height);
+        atlasW = std::max(atlasW, x);
+        atlasH = std::max(atlasH, y + input.height + textureAtlasPadding);
+    }
+
+    if (atlasW <= 0 || atlasH <= 0 || rectByKey.size() < 2)
+    {
+        if (isVerboseEnabled())
+        {
+            std::cout << "Texture atlas skipped: insufficient packable textures for atlas." << std::endl;
+        }
+        return false;
+    }
+
+    auto atlasTexture = std::make_shared<Texture>();
+    atlasTexture->width = static_cast<unsigned>(atlasW);
+    atlasTexture->height = static_cast<unsigned>(atlasH);
+    atlasTexture->bpp = 4;
+    atlasTexture->mode = GL_RGBA;
+    const size_t atlasBytes = static_cast<size_t>(atlasW) * static_cast<size_t>(atlasH) * 4u;
+    atlasTexture->data = std::shared_ptr<unsigned char[]>(new unsigned char[atlasBytes], [](unsigned char* p) { delete[] p; });
+    std::fill_n(atlasTexture->data.get(), atlasBytes, static_cast<unsigned char>(255));
+
+    for (const auto& input : atlasInputs)
+    {
+        const auto rectIt = rectByKey.find(input.key);
+        if (rectIt == rectByKey.end()) continue;
+        const AtlasRect rect = rectIt->second;
+        const Texture& srcTex = *input.texture;
+        const unsigned char* src = srcTex.data.get();
+        if (!src) continue;
+
+        for (int row = 0; row < rect.h; ++row)
+        {
+            unsigned char* dstRow = atlasTexture->data.get() +
+                (static_cast<size_t>(rect.y + row) * static_cast<size_t>(atlasW) + static_cast<size_t>(rect.x)) * 4u;
+            const unsigned char* srcRow = src + static_cast<size_t>(row) * static_cast<size_t>(rect.w) * static_cast<size_t>(srcTex.bpp);
+
+            if (srcTex.bpp == 4)
+            {
+                std::memcpy(dstRow, srcRow, static_cast<size_t>(rect.w) * 4u);
+            }
+            else if (srcTex.bpp == 3)
+            {
+                for (int col = 0; col < rect.w; ++col)
+                {
+                    const unsigned char* p = srcRow + static_cast<size_t>(col) * 3u;
+                    unsigned char* d = dstRow + static_cast<size_t>(col) * 4u;
+                    d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = 255;
+                }
+            }
+            else if (srcTex.bpp == 2)
+            {
+                for (int col = 0; col < rect.w; ++col)
+                {
+                    const unsigned char* p = srcRow + static_cast<size_t>(col) * 2u;
+                    unsigned char* d = dstRow + static_cast<size_t>(col) * 4u;
+                    d[0] = p[0]; d[1] = p[0]; d[2] = p[0]; d[3] = p[1];
+                }
+            }
+            else if (srcTex.bpp == 1)
+            {
+                for (int col = 0; col < rect.w; ++col)
+                {
+                    const unsigned char l = srcRow[col];
+                    unsigned char* d = dstRow + static_cast<size_t>(col) * 4u;
+                    d[0] = l; d[1] = l; d[2] = l; d[3] = 255;
+                }
+            }
+        }
+    }
+
+    std::vector<Vertex> candidateVertexData = vertexData;
+    std::vector<GLuint> candidateDiffuseIds(sceneNodes.size(), 0);
+
+    for (size_t nodeIndex = 0; nodeIndex < sceneNodes.size(); ++nodeIndex)
+    {
+        const SceneNode& node = sceneNodes[nodeIndex];
+        const std::string& key = nodeDiffuseTextureKeys[nodeIndex];
+        if (key.empty()) continue;
+
+        const auto rectIt = rectByKey.find(key);
+        if (rectIt == rectByKey.end()) continue;
+        const AtlasRect rect = rectIt->second;
+
+        const float uMin = static_cast<float>(rect.x) / static_cast<float>(atlasW);
+        const float vMin = static_cast<float>(rect.y) / static_cast<float>(atlasH);
+        const float uScale = static_cast<float>(rect.w) / static_cast<float>(atlasW);
+        const float vScale = static_cast<float>(rect.h) / static_cast<float>(atlasH);
+
+        const size_t start = static_cast<size_t>(node.startPosition);
+        const size_t end = static_cast<size_t>(node.endPosition);
+        if (start >= candidateVertexData.size() || end > candidateVertexData.size() || start >= end) continue;
+
+        for (size_t i = start; i < end; ++i)
+        {
+            float u = candidateVertexData[i].textureCoordinate[0];
+            float v = candidateVertexData[i].textureCoordinate[1];
+            u = u - std::floor(u);
+            v = v - std::floor(v);
+            candidateVertexData[i].textureCoordinate[0] = uMin + (u * uScale);
+            candidateVertexData[i].textureCoordinate[1] = vMin + (v * vScale);
+        }
+        candidateDiffuseIds[nodeIndex] = 1;
+        ++remappedNodeCount;
+    }
+
+    if (remappedNodeCount == 0)
+    {
+        return false;
+    }
+
+    textures[atlasTextureCacheKey] = atlasTexture;
+    GLuint newAtlasTextureId = 0;
+    addTexture(atlasTextureCacheKey, &newAtlasTextureId, atlasTexture.get());
+    if (newAtlasTextureId == 0)
+    {
+        return false;
+    }
+
+    atlasRectByTextureKey.clear();
+    atlasCachedWidth = static_cast<uint32_t>(atlasW);
+    atlasCachedHeight = static_cast<uint32_t>(atlasH);
+    for (const auto& [key, rect] : rectByKey)
+    {
+        atlasRectByTextureKey[key] = {
+            static_cast<uint32_t>(rect.x),
+            static_cast<uint32_t>(rect.y),
+            static_cast<uint32_t>(rect.w),
+            static_cast<uint32_t>(rect.h)
+        };
+    }
+
+    remappedVertexData.swap(candidateVertexData);
+    for (size_t nodeIndex = 0; nodeIndex < sceneNodes.size(); ++nodeIndex)
+    {
+        if (candidateDiffuseIds[nodeIndex] != 0)
+        {
+            sceneNodes[nodeIndex].diffuseTextureId = newAtlasTextureId;
+        }
+    }
+
+    atlasTextureId = newAtlasTextureId;
+    if (isVerboseEnabled())
+    {
+        std::cout << "Texture atlas built: " << atlasInputs.size() << " textures -> "
+                  << atlasW << "x" << atlasH << ", remapped nodes=" << remappedNodeCount << std::endl;
+    }
+    return true;
+}
+
 void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)
 {
     resolveTextures();
+
+    std::vector<Vertex> originalVertexData;
+    std::vector<Vertex> atlasVertexData;
+    GLuint atlasTextureId = 0;
+    size_t atlasNodeCount = 0;
+    bool atlasBuilt = false;
+
+    std::cerr << "[bufferToGpu] loadCached=" << (loadCachedScene ? "1" : "0")
+              << " atlasRects=" << atlasRectByTextureKey.size()
+              << " atlasDim=" << atlasCachedWidth << "x" << atlasCachedHeight << std::endl;
+
+    if (textureAtlasEnabled)
+    {
+        originalVertexData = vertexData;
+        atlasBuilt = applyCachedDiffuseTextureAtlas(atlasVertexData, atlasTextureId, atlasNodeCount);
+        if (atlasBuilt)
+        {
+            std::cerr << "[ATLAS] SUCCESS: Used cached atlas" << std::endl;
+        }
+        else
+        {
+            std::cerr << "[ATLAS] MISS: Building new atlas" << std::endl;
+            atlasBuilt = buildDiffuseTextureAtlas(atlasVertexData, atlasTextureId, atlasNodeCount);
+        }
+        if (atlasBuilt)
+        {
+            vertexData.swap(atlasVertexData);
+        }
+    }
+
     backend->bufferToGpu(vertexData, indices);
+
+    if (atlasBuilt)
+    {
+        vertexData.swap(originalVertexData);
+    }
 
     if (!loadCachedScene && configLoader->getBool("renderer.createBinObj"))
     {
