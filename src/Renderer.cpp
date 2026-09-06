@@ -742,28 +742,44 @@ int Renderer::createBinCacheInternal()
     std::vector<Cache::ChunkDescriptor> descriptors;
     uint64_t currentOffset = sizeof(Cache::CacheFileHeader);
 
+    const size_t serializedMaterialSize =
+        sizeof(Material::name) +
+        sizeof(Material::ambient) +
+        sizeof(Material::diffuse) +
+        sizeof(Material::specular) +
+        sizeof(Material::transmittance) +
+        sizeof(Material::emission) +
+        sizeof(Material::shininess) +
+        sizeof(Material::ior) +
+        sizeof(Material::dissolve) +
+        sizeof(Material::illum) +
+        sizeof(Material::diffuseTexName) +
+        sizeof(Material::normalTexName) +
+        sizeof(Material::specularTexName);
+
     // Calculate sizes and create descriptors
 
     // Materials
     if (!materials.empty()) {
-        descriptors.push_back({Cache::ChunkType::MATERIALS, Cache::CACHE_VERSION, 0, materials.size() * sizeof(Material)}); // Placeholder size
+        descriptors.push_back({Cache::ChunkType::MATERIALS, Cache::CACHE_VERSION, 0, materials.size() * serializedMaterialSize});
     }
     // Scene Nodes
     if (!sceneNodes.empty()) {
         size_t sceneNodesSize = 0;
         for (const auto& node : sceneNodes) {
+            const size_t serializedVertexDataSize = (node.vertexData && node.vertexDataSize > 0) ? node.vertexDataSize : 0;
             sceneNodesSize += sizeof(node.name) + sizeof(node.material) + sizeof(node.vertexDataSize) + 
-                              sizeof(Vertex) * node.vertexDataSize + sizeof(node.modelViewMatrix) +
+                              sizeof(Vertex) * serializedVertexDataSize + sizeof(node.modelViewMatrix) +
                               sizeof(node.startPosition) + sizeof(node.endPosition) + sizeof(node.primitiveMode) +
                               sizeof(node.ambientTextureId) + sizeof(node.diffuseTextureId) + 
                               sizeof(node.normalTextureId) + sizeof(node.specularTextureId) +
                               sizeof(node.boundingSphere) + sizeof(node.lx) + sizeof(node.ly) + sizeof(node.lz);
         }
-        descriptors.push_back({Cache::ChunkType::SCENE_NODES, Cache::CACHE_VERSION, 0, sceneNodesSize}); // Placeholder size
+        descriptors.push_back({Cache::ChunkType::SCENE_NODES, Cache::CACHE_VERSION, 0, sceneNodesSize});
     }
     // Vertex Data
     if (!vertexData.empty()) {
-        descriptors.push_back({Cache::ChunkType::VERTEX_DATA, Cache::CACHE_VERSION, 0, vertexData.size() * sizeof(Vertex)}); // Placeholder size
+        descriptors.push_back({Cache::ChunkType::VERTEX_DATA, Cache::CACHE_VERSION, 0, vertexData.size() * sizeof(Vertex)});
     }
     // Textures (Inventory and Pixels)
     if (!textures.empty()) {
@@ -774,8 +790,8 @@ int Renderer::createBinCacheInternal()
                 pixelsSize += static_cast<size_t>(texture->width) * texture->height * texture->bpp;
             }
         }
-        descriptors.push_back({Cache::ChunkType::TEXTURE_INVENTORY, Cache::CACHE_VERSION, 0, inventorySize}); // Placeholder size
-        descriptors.push_back({Cache::ChunkType::TEXTURE_ATLAS_PIXELS, Cache::CACHE_VERSION, 0, pixelsSize}); // Placeholder size
+        descriptors.push_back({Cache::ChunkType::TEXTURE_INVENTORY, Cache::CACHE_VERSION, 0, inventorySize});
+        descriptors.push_back({Cache::ChunkType::TEXTURE_ATLAS_PIXELS, Cache::CACHE_VERSION, 0, pixelsSize});
     }
     
     // Update header with number of chunks
