@@ -65,6 +65,11 @@ private:
     std::vector<VkFramebuffer> m_framebuffers;
 
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
+    VkImage m_depthImage = VK_NULL_HANDLE;
+    VkDeviceMemory m_depthImageMemory = VK_NULL_HANDLE;
+    VkImageView m_depthImageView = VK_NULL_HANDLE;
+    VkFormat findDepthFormat();
+    void createDepthResources();
     VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_graphicsPipeline = VK_NULL_HANDLE;
@@ -85,6 +90,7 @@ private:
     std::vector<vkhelpers::VulkanTexture> m_textures;
     
     uint32_t m_imageIndex = 0;
+    bool m_frameReady = false;
     
     void createInstance();
     void pickPhysicalDevice();
