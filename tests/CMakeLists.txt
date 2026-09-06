@@ -23,6 +23,7 @@ add_executable(unit_tests ${TEST_SOURCES})
 
 target_include_directories(unit_tests PRIVATE ../include)
 target_include_directories(unit_tests PRIVATE ../dependencies/glm)
+target_compile_definitions(unit_tests PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 # Link dependencies
 target_link_libraries(unit_tests PRIVATE

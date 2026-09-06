@@ -256,6 +256,7 @@ static int LoadScene(void* appPtr)
 
 bool MyGLApp::startup(std::string_view filename)
 {
+    std::cout << "Startup: reading config" << std::endl;
     speed = appConfig->getFloat("camera.speed");
     mouseSpeed = appConfig->getFloat("mouse.speed");
     windowGrab = appConfig->getBool("window.grab");
@@ -272,8 +273,10 @@ bool MyGLApp::startup(std::string_view filename)
         std::cerr << "Unable to initialize SDL: " << SDL_GetError() << std::endl;
         return false;
     }
+    std::cout << "Startup: SDL initialized" << std::endl;
     sdlInitialized = true;
 
+    std::cout << "Startup: creating backend" << std::endl;
     std::unique_ptr<IRenderBackend> backend = RenderBackendFactory::createBackend(*renderer, *appConfig, window);
 
     if (window == nullptr || backend == nullptr) {
@@ -281,10 +284,13 @@ bool MyGLApp::startup(std::string_view filename)
         return false;
     }
 
+    std::cout << "Startup: initializing backend" << std::endl;
     if (!backend->initialize(window)) {
         std::cerr << "Failed to initialize backend." << std::endl;
         return false;
     }
+
+    std::cout << "Startup: backend initialized" << std::endl;
 
     renderer->setBackend(std::move(backend));
 
