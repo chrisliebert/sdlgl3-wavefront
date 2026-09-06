@@ -177,12 +177,29 @@ std::shared_ptr<Texture> Renderer::textureFromSurface(std::unique_ptr<SDL_Surfac
     texture->width = static_cast<unsigned>(image->w);
     texture->height = static_cast<unsigned>(image->h);
     texture->bpp = static_cast<unsigned>(SDL_BYTESPERPIXEL(image->format));
-    // Copy pixel data to owned buffer (prevents use-after-free)
-    const size_t dataSize = static_cast<size_t>(image->w) * image->h * texture->bpp;
+    // Copy pixel data to owned tightly-packed buffer (respect source pitch).
+    const size_t rowBytes = static_cast<size_t>(image->w) * texture->bpp;
+    const size_t dataSize = rowBytes * static_cast<size_t>(image->h);
     if (dataSize > 0 && image->pixels)
     {
         texture->data = std::shared_ptr<unsigned char[]>(new unsigned char[dataSize], [](unsigned char* p) { delete[] p; });
-        std::memcpy(texture->data.get(), image->pixels, dataSize);
+        const unsigned char* src = static_cast<const unsigned char*>(image->pixels);
+        unsigned char* dst = texture->data.get();
+        const size_t srcPitch = static_cast<size_t>(image->pitch);
+
+        if (srcPitch == rowBytes)
+        {
+            std::memcpy(dst, src, dataSize);
+        }
+        else
+        {
+            for (int y = 0; y < image->h; ++y)
+            {
+                const unsigned char* srcRow = src + static_cast<size_t>(y) * srcPitch;
+                unsigned char* dstRow = dst + static_cast<size_t>(y) * rowBytes;
+                std::memcpy(dstRow, srcRow, rowBytes);
+            }
+        }
     }
     return texture;
 }
@@ -220,23 +237,11 @@ void Renderer::addTexture(std::string_view textureFileName, GLuint* textureId, s
     
     const Texture* tex = it->second.get();
     if (!tex || !tex->isValid()) return;
-    
-    if (backend && backend->isOpenGL()) {
-        glGenTextures(1, textureId);
-    glBindTexture(GL_TEXTURE_2D, *textureId);
-    glTexImage2D(GL_TEXTURE_2D, 0, tex->mode, 
-                 static_cast<GLsizei>(tex->width), static_cast<GLsizei>(tex->height),
-                 0, tex->mode, GL_UNSIGNED_BYTE, tex->data.get());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glGenerateMipmap(GL_TEXTURE_2D);
 
-    // Anisotropic filtering
-    GLfloat maxAniso = 0.0f;
-    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-    if (maxAniso > 0.0f) {
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
-    }
+    // Upload through the selected backend; this guarantees Vulkan gets a texture ID
+    // even on the first time a texture is seen.
+    if (backend) {
+        backend->addTexture(textureId, tex);
     }
 }
 
@@ -1182,6 +1187,8 @@ bool Renderer::buildScene(Camera& camera, std::string_view cacheFilename)
 
 void Renderer::resolveTextures()
 {
+    std::map<std::string, GLuint> generatedMaterialColorTextures;
+
     for (auto& node : sceneNodes)
     {
         if (node.material[0] == '\0') continue;
@@ -1195,6 +1202,41 @@ void Renderer::resolveTextures()
             if (mat.hasDiffuseTexture())
             {
                 addTexture(mat.diffuseTexName, &node.diffuseTextureId);
+            }
+            else
+            {
+                auto cached = generatedMaterialColorTextures.find(materialName);
+                if (cached != generatedMaterialColorTextures.end())
+                {
+                    node.diffuseTextureId = cached->second;
+                }
+                else
+                {
+                    auto materialTexture = std::make_shared<Texture>();
+                    materialTexture->width = 1;
+                    materialTexture->height = 1;
+                    materialTexture->bpp = 4;
+                    materialTexture->mode = GL_RGBA;
+                    materialTexture->data = std::shared_ptr<unsigned char[]>(new unsigned char[4], [](unsigned char* p) { delete[] p; });
+
+                    const auto toByte = [](float value) -> unsigned char {
+                        const float clamped = std::clamp(value, 0.0f, 1.0f);
+                        return static_cast<unsigned char>(clamped * 255.0f + 0.5f);
+                    };
+
+                    materialTexture->data[0] = toByte(mat.diffuse[0]);
+                    materialTexture->data[1] = toByte(mat.diffuse[1]);
+                    materialTexture->data[2] = toByte(mat.diffuse[2]);
+                    materialTexture->data[3] = 255;
+
+                    const std::string generatedTextureKey = std::string("__material_color__") + materialName;
+                    textures[generatedTextureKey] = materialTexture;
+
+                    GLuint generatedId = 0;
+                    addTexture(generatedTextureKey, &generatedId, materialTexture.get());
+                    node.diffuseTextureId = generatedId;
+                    generatedMaterialColorTextures.emplace(materialName, generatedId);
+                }
             }
             if (mat.normalTexName[0] != '\0')
             {
