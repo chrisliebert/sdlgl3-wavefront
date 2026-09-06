@@ -15,22 +15,7 @@
 
 
 
-void checkForGLSLError(GLuint programId)
-{
-    GLint result = GL_FALSE;
-    glGetProgramiv(programId, GL_LINK_STATUS, &result);
-    if (result == GL_FALSE)
-    {
-        GLint logLength = 0;
-        glGetProgramiv(programId, GL_INFO_LOG_LENGTH, &logLength);
-        if (logLength > 1)
-        {
-            std::vector<GLchar> log(static_cast<std::size_t>(logLength), 0);
-            glGetProgramInfoLog(programId, static_cast<GLsizei>(log.size()), nullptr, log.data());
-            fprintf(stdout, "Shader link error: %s\n", log.data());
-        }
-    }
-}
+
 
 #ifdef GLAD_DEBUG
 void pre_gl_call(const char* name, void* funcptr, int len_args, ...)
@@ -236,7 +221,8 @@ void Renderer::addTexture(std::string_view textureFileName, GLuint* textureId, s
     const Texture* tex = it->second.get();
     if (!tex || !tex->isValid()) return;
     
-    glGenTextures(1, textureId);
+    if (backend && backend->isOpenGL()) {
+        glGenTextures(1, textureId);
     glBindTexture(GL_TEXTURE_2D, *textureId);
     glTexImage2D(GL_TEXTURE_2D, 0, tex->mode, 
                  static_cast<GLsizei>(tex->width), static_cast<GLsizei>(tex->height),
@@ -251,26 +237,15 @@ void Renderer::addTexture(std::string_view textureFileName, GLuint* textureId, s
     if (maxAniso > 0.0f) {
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
     }
+    }
 }
 
 void Renderer::addTexture(std::string_view /*textureFileName*/, GLuint* textureId, const Texture* texture)
 {
     if (!textureId || !texture || !texture->isValid()) return;
     
-    glGenTextures(1, textureId);
-    glBindTexture(GL_TEXTURE_2D, *textureId);
-    glTexImage2D(GL_TEXTURE_2D, 0, texture->mode, 
-                 static_cast<GLsizei>(texture->width), static_cast<GLsizei>(texture->height),
-                 0, texture->mode, GL_UNSIGNED_BYTE, texture->data.get());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glGenerateMipmap(GL_TEXTURE_2D);
-
-    // Anisotropic filtering
-    GLfloat maxAniso = 0.0f;
-    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-    if (maxAniso > 0.0f) {
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+    if (backend) {
+        backend->addTexture(textureId, texture);
     }
 }
 
@@ -931,10 +906,11 @@ bool Renderer::buildScene(Camera& camera)
         }
 
         Math::Sphere sphere = Math::calculateBoundingSphere(node.vertexData.get(), node.vertexDataSize);
-        node.lx = sphere.center.x;
-        node.ly = sphere.center.y;
-        node.lz = sphere.center.z;
-        node.boundingSphere = sphere.radius;
+        const Math::Sphere worldSphere = Math::transformBoundingSphere(node.modelViewMatrix, sphere.center, sphere.radius);
+        node.lx = worldSphere.center.x;
+        node.ly = worldSphere.center.y;
+        node.lz = worldSphere.center.z;
+        node.boundingSphere = worldSphere.radius;
         
         if (node.boundingSphere == 0.0f)
             node.boundingSphere = 0.1f;
@@ -1253,7 +1229,7 @@ void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)
     if (occlusionCullingEnabled)
     {
         occlusionQueries.resize(sceneNodes.size(), 0);
-        glGenQueries(static_cast<GLsizei>(occlusionQueries.size()), occlusionQueries.data());
+        if (backend && backend->isOpenGL()) { glGenQueries(static_cast<GLsizei>(occlusionQueries.size()), occlusionQueries.data()); }
         occlusionVisible.assign(sceneNodes.size(), 1);
         occlusionSkipCounters.assign(sceneNodes.size(), 0);
     }
@@ -1408,11 +1384,11 @@ void Renderer::updateOcclusionQueryResults()
         if (query == 0) continue;
         
         GLuint available = 0;
-        glGetQueryObjectuiv(query, GL_QUERY_RESULT_AVAILABLE, &available);
+        if (backend && backend->isOpenGL()) { glGetQueryObjectuiv(query, GL_QUERY_RESULT_AVAILABLE, &available); }
         if (available)
         {
             GLuint samples = 0;
-            glGetQueryObjectuiv(query, GL_QUERY_RESULT, &samples);
+            if (backend && backend->isOpenGL()) { glGetQueryObjectuiv(query, GL_QUERY_RESULT, &samples); }
             occlusionVisible[i] = (samples >= static_cast<GLuint>(occlusionMinSamples)) ? 1 : 0;
         }
     }
@@ -1440,6 +1416,9 @@ void Renderer::render(Camera& camera, const FrameContext& frameContext)
         std::cout << "skipping render() on empty scene" << std::endl;
         return;
     }
+
+    static int debugFrameCounter = 0;
+    ++debugFrameCounter;
 
     Uint64 frameStartCounter = SDL_GetPerformanceCounter();
     double shadowPassMs = 0.0;
@@ -1513,6 +1492,12 @@ void Renderer::render(Camera& camera, const FrameContext& frameContext)
     }
 
     const int frustumCulledNodes = static_cast<int>(sceneNodes.size()) - static_cast<int>(visibleNodeIdsScratch.size());
+    debugVisibleNodeIds = visibleNodeIdsScratch;
+    if (isVerboseEnabled() && (debugFrameCounter % 30 == 0))
+    {
+        std::cout << "Frustum cull: visible " << visibleNodeIdsScratch.size() << "/"
+                  << sceneNodes.size() << " culled " << frustumCulledNodes << std::endl;
+    }
 
     visibleNodesSortedScratch.clear();
     visibleNodesSortedScratch.reserve(visibleNodeIdsScratch.size());
@@ -1564,7 +1549,15 @@ void Renderer::render(Camera& camera, const FrameContext& frameContext)
     }
 
     backend->submit(renderCommandsScratch);
-    checkForGLError();
+
+    if (cullDebugOverlayEnabled && backend && backend->isOpenGL())
+    {
+        if (auto* glBackend = dynamic_cast<OpenGLBackend*>(backend.get()))
+        {
+            glBackend->drawCullDebugOverlay(camera, debugVisibleNodeIds);
+        }
+    }
+    
     backend->endFrame();
 
     drawCalls = static_cast<int>(renderCommandsScratch.size());

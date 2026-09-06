@@ -26,6 +26,7 @@ public:
     void endFrame() override;
 
     // SDL_gpu-specific method
+    void addTexture(GLuint* textureId, const struct Texture* texture) override {}
     bool bufferToGpu(const std::vector<Vertex>& vertexData, const std::vector<uint32_t>& indices) override;
     
     // IRenderBackend shadow interface (stub for SDL_gpu backend)

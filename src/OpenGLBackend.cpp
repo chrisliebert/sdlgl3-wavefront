@@ -610,4 +610,166 @@ void OpenGLBackend::getShadowMapSize(int& width, int& height) const { width = sh
 void OpenGLBackend::beginFrame(const FrameContext&) { glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); }
 void OpenGLBackend::endFrame() { if (m_glContext) SDL_GL_SwapWindow(SDL_GL_GetCurrentWindow()); }
 
+void OpenGLBackend::ensureDebugProgram()
+{
+    if (debugProgram != 0) return;
 
+    const char* debugVertexShaderSource = R"(
+        #version 330 core
+        layout(location = 0) in vec3 aPosition;
+        uniform mat4 uViewProjection;
+        void main() {
+            gl_Position = uViewProjection * vec4(aPosition, 1.0);
+        }
+    )";
+
+    const char* debugFragmentShaderSource = R"(
+        #version 330 core
+        out vec4 FragColor;
+        uniform vec3 uColor;
+        void main() {
+            FragColor = vec4(uColor, 1.0);
+        }
+    )";
+
+    const GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &debugVertexShaderSource, nullptr);
+    glCompileShader(vertexShader);
+
+    const GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &debugFragmentShaderSource, nullptr);
+    glCompileShader(fragmentShader);
+
+    debugProgram = glCreateProgram();
+    glAttachShader(debugProgram, vertexShader);
+    glAttachShader(debugProgram, fragmentShader);
+    glLinkProgram(debugProgram);
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    glGenVertexArrays(1, &debugVao);
+    glGenBuffers(1, &debugVbo);
+}
+
+void OpenGLBackend::drawDebugLines(const std::vector<glm::vec3>& linePoints, const glm::vec3& color, const glm::mat4& viewProjection) const
+{
+    if (linePoints.size() < 2 || debugProgram == 0) return;
+
+    glUseProgram(debugProgram);
+    const GLint colorLocation = glGetUniformLocation(debugProgram, "uColor");
+    const GLint viewProjectionLocation = glGetUniformLocation(debugProgram, "uViewProjection");
+    if (viewProjectionLocation >= 0)
+    {
+        glUniformMatrix4fv(viewProjectionLocation, 1, GL_FALSE, glm::value_ptr(viewProjection));
+    }
+    if (colorLocation >= 0)
+    {
+        glUniform3fv(colorLocation, 1, glm::value_ptr(color));
+    }
+
+    glBindVertexArray(debugVao);
+    glBindBuffer(GL_ARRAY_BUFFER, debugVbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(linePoints.size() * sizeof(glm::vec3)), linePoints.data(), GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), nullptr);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(linePoints.size()));
+    glDisableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+    glUseProgram(0);
+}
+
+void OpenGLBackend::drawCullDebugOverlay(const Camera& camera, const std::vector<int>& visibleNodeIds)
+{
+    if (!owner.configLoader || !owner.configLoader->hasVar("renderer.culling.debug")) return;
+    if (!owner.configLoader->getBool("renderer.culling.debug")) return;
+
+    ensureDebugProgram();
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+
+    const glm::mat4 viewProjection = camera.projectionMatrix * camera.modelViewMatrix;
+    const glm::mat4 inverseProjection = glm::inverse(viewProjection);
+    static const std::array<glm::vec3, 8> ndcCorners = {
+        glm::vec3(-1.0f, -1.0f, -1.0f),
+        glm::vec3( 1.0f, -1.0f, -1.0f),
+        glm::vec3(-1.0f,  1.0f, -1.0f),
+        glm::vec3( 1.0f,  1.0f, -1.0f),
+        glm::vec3(-1.0f, -1.0f,  1.0f),
+        glm::vec3( 1.0f, -1.0f,  1.0f),
+        glm::vec3(-1.0f,  1.0f,  1.0f),
+        glm::vec3( 1.0f,  1.0f,  1.0f)
+    };
+
+    std::vector<glm::vec3> frustumLines;
+    frustumLines.reserve(24);
+    const std::array<int, 24> edges = {{
+        0, 1, 0, 2, 1, 3, 2, 3,
+        4, 5, 4, 6, 5, 7, 6, 7,
+        0, 4, 1, 5, 2, 6, 3, 7
+    }};
+    for (size_t i = 0; i < edges.size(); i += 2)
+    {
+        const glm::vec3 a = glm::vec3(inverseProjection * glm::vec4(ndcCorners[edges[i]], 1.0f)) / glm::vec4(ndcCorners[edges[i]], 1.0f).w;
+        const glm::vec3 b = glm::vec3(inverseProjection * glm::vec4(ndcCorners[edges[i + 1]], 1.0f)) / glm::vec4(ndcCorners[edges[i + 1]], 1.0f).w;
+        frustumLines.push_back(a);
+        frustumLines.push_back(b);
+    }
+    drawDebugLines(frustumLines, glm::vec3(0.0f, 1.0f, 1.0f), viewProjection);
+
+    std::vector<glm::vec3> boundsLines;
+    boundsLines.reserve(owner.sceneNodes.size() * 24);
+    std::unordered_set<int> visibleSet(visibleNodeIds.begin(), visibleNodeIds.end());
+    for (size_t i = 0; i < owner.sceneNodes.size(); ++i)
+    {
+        const SceneNode& node = owner.sceneNodes[i];
+        if (node.boundingSphere <= 0.0f) continue;
+        const glm::vec3 center(node.lx, node.ly, node.lz);
+        const float radius = node.boundingSphere;
+        const glm::vec3 half(radius, radius, radius);
+        const std::array<glm::vec3, 8> box = {
+            center - half, glm::vec3(center.x + radius, center.y - radius, center.z - radius),
+            glm::vec3(center.x - radius, center.y + radius, center.z - radius), glm::vec3(center.x + radius, center.y + radius, center.z - radius),
+            glm::vec3(center.x - radius, center.y - radius, center.z + radius), glm::vec3(center.x + radius, center.y - radius, center.z + radius),
+            glm::vec3(center.x - radius, center.y + radius, center.z + radius), glm::vec3(center.x + radius, center.y + radius, center.z + radius)
+        };
+        static const std::array<int, 24> boxEdges = {{
+            0, 1, 0, 2, 1, 3, 2, 3,
+            4, 5, 4, 6, 5, 7, 6, 7,
+            0, 4, 1, 5, 2, 6, 3, 7
+        }};
+        for (size_t edgeIndex = 0; edgeIndex < boxEdges.size(); edgeIndex += 2)
+        {
+            boundsLines.push_back(box[boxEdges[edgeIndex]]);
+            boundsLines.push_back(box[boxEdges[edgeIndex + 1]]);
+        }
+    }
+    drawDebugLines(boundsLines, glm::vec3(0.0f, 1.0f, 0.0f), viewProjection);
+
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+}
+
+void OpenGLBackend::addTexture(GLuint* textureId, const struct Texture* texture) {
+    if (!textureId || !texture || !texture->isValid()) return;
+    
+    glGenTextures(1, textureId);
+    glBindTexture(GL_TEXTURE_2D, *textureId);
+    glTexImage2D(GL_TEXTURE_2D, 0, texture->mode, 
+                 static_cast<GLsizei>(texture->width), static_cast<GLsizei>(texture->height),
+                 0, texture->mode, GL_UNSIGNED_BYTE, texture->data.get());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    // Anisotropic filtering
+    GLfloat maxAniso = 0.0f;
+    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+    if (maxAniso > 0.0f) {
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+    }
+}

@@ -1,15 +1,14 @@
 #include "Camera.h"
+#include <iostream>
 
 static const double kPi = 3.14159265358979323846;
 
-Camera::Camera()
+Camera::Camera(int width, int height)
 {
-    // get viewport
-    GLint mViewport[4];
-    glGetIntegerv( GL_VIEWPORT, mViewport );
-    const float viewportWidth = static_cast<float>(mViewport[2]);
-    const float viewportHeight = static_cast<float>(mViewport[3]);
-    std::cout << "Camera viewport: " << viewportWidth << "x" << viewportHeight << std::endl; const float aspect = (viewportWidth > 0.0f && viewportHeight > 0.0f)
+    const float viewportWidth = static_cast<float>(width);
+    const float viewportHeight = static_cast<float>(height);
+    std::cout << "Camera viewport: " << viewportWidth << "x" << viewportHeight << std::endl; 
+    const float aspect = (viewportWidth > 0.0f && viewportHeight > 0.0f)
         ? (viewportWidth / viewportHeight)
         : (16.0f / 9.0f);
     projectionMatrix = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
@@ -19,6 +18,7 @@ Camera::Camera()
     aim(0.0, 0.0);
     update();
 }
+
 
 void Camera::aim(double x, double y)
 {
@@ -77,3 +77,4 @@ void Camera::update()
                           up
                       );
 }
+

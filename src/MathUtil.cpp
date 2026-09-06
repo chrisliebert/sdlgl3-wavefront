@@ -1,7 +1,6 @@
 #include "MathUtil.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtx/norm.hpp>
 #include <limits>
 #include <algorithm>
 
@@ -33,9 +32,9 @@ Sphere calculateBoundingSphere(const Vertex* vertices, size_t numVertices) {
         if (p.z > max_z.z) max_z = p;
     }
 
-    float dist_x_sq = glm::distance2(max_x, min_x);
-    float dist_y_sq = glm::distance2(max_y, min_y);
-    float dist_z_sq = glm::distance2(max_z, min_z);
+    const float dist_x_sq = glm::dot(max_x - min_x, max_x - min_x);
+    const float dist_y_sq = glm::dot(max_y - min_y, max_y - min_y);
+    const float dist_z_sq = glm::dot(max_z - min_z, max_z - min_z);
 
     glm::vec3 p1 = min_x;
     glm::vec3 p2 = max_x;
@@ -52,17 +51,33 @@ Sphere calculateBoundingSphere(const Vertex* vertices, size_t numVertices) {
 
     for (size_t i = 0; i < numVertices; ++i) {
         glm::vec3 point(vertices[i].vertex[0], vertices[i].vertex[1], vertices[i].vertex[2]);
-        float distSq = glm::distance2(point, sphere.center);
+        const float distSq = glm::dot(point - sphere.center, point - sphere.center);
         if (distSq > sphere.radius * sphere.radius) {
-            float dist = glm::sqrt(distSq);
-            glm::vec3 dir = (point - sphere.center) / dist;
-            glm::vec3 p_opposite = sphere.center - sphere.radius * dir;
+            const float dist = std::sqrt(distSq);
+            const glm::vec3 dir = (point - sphere.center) / dist;
+            const glm::vec3 p_opposite = sphere.center - sphere.radius * dir;
             sphere.center = (p_opposite + point) * 0.5f;
-            sphere.radius = glm::distance(p_opposite, point) * 0.5f;
+            sphere.radius = glm::length(p_opposite - point) * 0.5f;
         }
     }
 
     return sphere;
+}
+
+Sphere transformBoundingSphere(const glm::mat4& transform, const glm::vec3& center, float radius) {
+    const glm::vec3 worldCenter = transform * glm::vec4(center, 1.0f);
+
+    const glm::vec3 xAxis = glm::vec3(transform[0]);
+    const glm::vec3 yAxis = glm::vec3(transform[1]);
+    const glm::vec3 zAxis = glm::vec3(transform[2]);
+
+    float maxAxisScale = glm::length(xAxis);
+    const float yScale = glm::length(yAxis);
+    const float zScale = glm::length(zAxis);
+    if (yScale > maxAxisScale) maxAxisScale = yScale;
+    if (zScale > maxAxisScale) maxAxisScale = zScale;
+
+    return Sphere{worldCenter, radius * std::max(1.0f, maxAxisScale)};
 }
 
 }

@@ -25,7 +25,9 @@ public:
     // IRenderBackend interface implementation
     bool initialize(SDL_Window* window) override;
     void shutdown() override;
+    bool isOpenGL() const override { return true; }
     void submit(const std::vector<RenderCommand>& commands) override;
+    void addTexture(GLuint* textureId, const struct Texture* texture) override;
     bool bufferToGpu(const std::vector<struct Vertex>& vertexData, const std::vector<uint32_t>& indices) override;
     void createShadowMap(const std::vector<struct SceneNode>& nodes) override;
 
@@ -43,6 +45,7 @@ public:
     void getShadowMapSize(int& width, int& height) const override;
     void beginFrame(const struct FrameContext& frameContext) override;
     void endFrame() override;
+    void drawCullDebugOverlay(const Camera& camera, const std::vector<int>& visibleNodeIds);
 
 
 private:
@@ -94,6 +97,13 @@ private:
     std::vector<RenderCommand> lastSubmittedCommands;
     GLuint m_prevVAO = 0;
     GLsync m_vboFence = nullptr;
+
+    GLuint debugProgram = 0;
+    GLuint debugVao = 0;
+    GLuint debugVbo = 0;
+    void ensureDebugProgram();
+    void drawCullDebugOverlay();
+    void drawDebugLines(const std::vector<glm::vec3>& linePoints, const glm::vec3& color, const glm::mat4& viewProjection) const;
 };
 
 #endif // _OPENGL_BACKEND_H_

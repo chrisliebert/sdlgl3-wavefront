@@ -1,4 +1,5 @@
 #include "Frustum.h"
+#include "MathUtil.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
@@ -274,6 +275,20 @@ void testEmptyFrustum() {
     std::cout << "PASSED" << std::endl;
 }
 
+void testTransformedBoundingSphere() {
+    std::cout << "  [TEST] World-space transformed bounding sphere... ";
+
+    const glm::mat4 transform = glm::translate(glm::mat4(1.0f), glm::vec3(10.0f, 0.0f, 0.0f));
+    const auto worldSphere = Math::transformBoundingSphere(transform, glm::vec3(0.0f, 0.0f, 0.0f), 2.0f);
+
+    assert(std::fabs(worldSphere.center.x - 10.0f) < EPSILON);
+    assert(std::fabs(worldSphere.center.y) < EPSILON);
+    assert(std::fabs(worldSphere.center.z) < EPSILON);
+    assert(std::fabs(worldSphere.radius - 2.0f) < EPSILON);
+
+    std::cout << "PASSED" << std::endl;
+}
+
 void testNearPlaneBoundary() {
     std::cout << "  [TEST] Near plane boundary... ";
     
@@ -334,6 +349,7 @@ int runFrustumTests() {
     testCubePartiallyInFrustum();
     testPolygonInFrustum();
     testEmptyFrustum();
+    testTransformedBoundingSphere();
     testNearPlaneBoundary();
     testFarPlaneBoundary();
     

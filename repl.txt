@@ -1,31 +1,20 @@
-void Renderer::resolveTextures()
-{
-    for (auto& node : sceneNodes)
-    {
-        if (node.material[0] == '\0') continue;
-        
-        std::string materialName(node.material);
-        auto it = materials.find(materialName);
-        if (it != materials.end())
-        {
-            const Material& mat = it->second;
-            
-            if (mat.hasDiffuseTexture())
-            {
-                addTexture(mat.diffuseTexName, &node.diffuseTextureId);
-            }
-            if (mat.normalTexName[0] != '\0')
-            {
-                addTexture(mat.normalTexName, &node.normalTextureId);
-            }
-            if (mat.specularTexName[0] != '\0')
-            {
-                addTexture(mat.specularTexName, &node.specularTextureId);
-            }
-        }
-    }
-}
+#include "Camera.h"
+#include <iostream>
 
-void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)
+static const double kPi = 3.14159265358979323846;
+
+Camera::Camera(int width, int height)
 {
-    resolveTextures();
+    const float viewportWidth = static_cast<float>(width);
+    const float viewportHeight = static_cast<float>(height);
+    std::cout << "Camera viewport: " << viewportWidth << "x" << viewportHeight << std::endl; 
+    const float aspect = (viewportWidth > 0.0f && viewportHeight > 0.0f)
+        ? (viewportWidth / viewportHeight)
+        : (16.0f / 9.0f);
+    projectionMatrix = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
+    horizontalAngle = kPi;
+    verticalAngle = 0.0;
+    position = glm::vec3(0.0, 1.0, 0.0);
+    aim(0.0, 0.0);
+    update();
+}

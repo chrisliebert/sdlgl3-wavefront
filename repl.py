@@ -1,39 +1,45 @@
-with open('src/Renderer.cpp', 'r') as f:
+import re
+
+with open('src/VulkanBackend.cpp', 'r') as f:
     text = f.read()
 
-replacement = '''void Renderer::resolveTextures()
-{
-    for (auto& node : sceneNodes)
-    {
-        if (node.material[0] == '\\0') continue;
-        
-        std::string materialName(node.material);
-        auto it = materials.find(materialName);
-        if (it != materials.end())
-        {
-            const Material& mat = it->second;
-            
-            if (mat.hasDiffuseTexture())
-            {
-                addTexture(mat.diffuseTexName, &node.diffuseTextureId);
-            }
-            if (mat.normalTexName[0] != '\\0')
-            {
-                addTexture(mat.normalTexName, &node.normalTextureId);
-            }
-            if (mat.specularTexName[0] != '\\0')
-            {
-                addTexture(mat.specularTexName, &node.specularTextureId);
-            }
-        }
+# Let's see if we can create a default texture.
+# In initialize(), after createSyncObjects(), we can do:
+default_tex_code = '''
+    createSyncObjects();
+
+    // Create a default 1x1 white texture
+    SDL_Surface* surface = SDL_CreateSurface(1, 1, SDL_PIXELFORMAT_RGBA32);
+    if (surface) {
+        uint32_t* pixels = (uint32_t*)surface->pixels;
+        *pixels = 0xFFFFFFFF; // White
+        uint32_t defaultTexId = 0;
+        addTexture(surface, &defaultTexId);
+        SDL_DestroySurface(surface);
     }
-}
+'''
+text = text.replace('createSyncObjects();', default_tex_code)
 
-void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)
-{
-    resolveTextures();'''
+# Then in submit:
+bind_code = '''
+        VkDescriptorSet ds = VK_NULL_HANDLE;
+        if (cmd.node->diffuseTextureId > 0 && cmd.node->diffuseTextureId <= m_textures.size()) {
+            ds = m_textures[cmd.node->diffuseTextureId - 1].descriptorSet;
+        } else if (!m_textures.empty()) {
+            ds = m_textures[0].descriptorSet;
+        }
+        
+        if (ds != VK_NULL_HANDLE) {
+            vkCmdBindDescriptorSets(m_commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &ds, 0, nullptr);
+        }
+'''
 
-text = text.replace('void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)\n{', replacement)
+# Let's replace the existing bind logic
+text = re.sub(
+    r'if\s*\(cmd\.node->diffuseTextureId\s*>\s*0\s*&&\s*cmd\.node->diffuseTextureId\s*<=\s*m_textures\.size\(\)\)\s*\{\s*VkDescriptorSet\s*ds\s*=\s*m_textures\[cmd\.node->diffuseTextureId\s*-\s*1\]\.descriptorSet;\s*vkCmdBindDescriptorSets\(m_commandBuffer,\s*VK_PIPELINE_BIND_POINT_GRAPHICS,\s*m_pipelineLayout,\s*0,\s*1,\s*&ds,\s*0,\s*nullptr\);\s*\}',
+    bind_code,
+    text
+)
 
-with open('src/Renderer.cpp', 'w') as f:
+with open('src/VulkanBackend.cpp', 'w') as f:
     f.write(text)

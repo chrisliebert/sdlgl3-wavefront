@@ -9,7 +9,7 @@
 class Camera
 {
 public:
-    Camera();
+    Camera(int width, int height);
     
     // Non-copyable, movable
     Camera(const Camera&) = delete;

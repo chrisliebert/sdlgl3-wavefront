@@ -16,6 +16,7 @@ set(TEST_SOURCES
     ../src/ConfigLoader.cpp
     ../src/GpuProgram.cpp
     ../src/Shader.cpp
+    ../src/MathUtil.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES})

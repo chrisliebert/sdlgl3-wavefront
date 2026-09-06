@@ -89,6 +89,8 @@ public:
     [[nodiscard]] bool isProfilerEnabled() const { return profilerEnabled; }
     [[nodiscard]] bool isVerboseEnabled() const;
     [[nodiscard]] bool getShadowsEnabled() const { return shadowsEnabled; }
+    [[nodiscard]] bool isCullDebugEnabled() const { return cullDebugOverlayEnabled; }
+    [[nodiscard]] const std::vector<int>& getDebugVisibleNodeIds() const { return debugVisibleNodeIds; }
 
     // Public data access (for backend use) - protected by sceneDataMutex during writes
     std::vector<SceneNode> sceneNodes;
@@ -135,6 +137,8 @@ private:
     int occlusionRetestFrames = 8;
     int occlusionMinSamples = 1;
     bool frustumCullingEnabled = true;
+    bool cullDebugOverlayEnabled = true;
+    std::vector<int> debugVisibleNodeIds;
     
     PerfStats perfStats{};
     Uint64 lastPerfCounter = 0;

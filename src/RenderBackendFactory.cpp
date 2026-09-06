@@ -1,6 +1,7 @@
 #include "RenderBackendFactory.h"
 #include "OpenGLBackend.h"
 #include "SdlGpuBackend.h"
+#include "VulkanBackend.h"
 #include "Renderer.h"
 #include <SDL3/SDL.h>
 
@@ -24,7 +25,7 @@ std::unique_ptr<IRenderBackend> RenderBackendFactory::createBackend(
             config.hasVar("window.width") ? config.getInt("window.width") : 1280, config.hasVar("window.height") ? config.getInt("window.height") : 720,
             SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
         
-        backend = std::make_unique<SdlGpuBackend>(renderer);
+        backend = std::make_unique<VulkanBackend>(renderer);
     }
     return backend;
 }

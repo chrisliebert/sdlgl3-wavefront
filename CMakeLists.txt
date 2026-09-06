@@ -114,7 +114,29 @@ set(APP_SOURCES
     src/MathUtil.cpp
     src/RenderBackendFactory.cpp
     src/SdlGpuBackend.cpp
+    src/VulkanBackend.cpp
 )
+
+# --- Shader Compilation ---
+find_program(GLSLC_EXE glslc HINTS $ENV{VULKAN_SDK}/Bin)
+if(GLSLC_EXE)
+    add_custom_command(
+        OUTPUT ${CMAKE_BINARY_DIR}/shaders/vulkan.vert.spv
+        COMMAND ${GLSLC_EXE} ${CMAKE_CURRENT_SOURCE_DIR}/shaders/vulkan.vert -o ${CMAKE_BINARY_DIR}/shaders/vulkan.vert.spv
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/vulkan.vert
+        COMMENT "Compiling main.vs to SPIR-V"
+    )
+    add_custom_command(
+        OUTPUT ${CMAKE_BINARY_DIR}/shaders/vulkan.frag.spv
+        COMMAND ${GLSLC_EXE} ${CMAKE_CURRENT_SOURCE_DIR}/shaders/vulkan.frag -o ${CMAKE_BINARY_DIR}/shaders/vulkan.frag.spv
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/vulkan.frag
+        COMMENT "Compiling main.frag to SPIR-V"
+    )
+    list(APPEND APP_SOURCES 
+        ${CMAKE_BINARY_DIR}/shaders/vulkan.vert.spv 
+        ${CMAKE_BINARY_DIR}/shaders/vulkan.frag.spv
+    )
+endif()
 
 add_executable(sdlglapp ${APP_SOURCES})
 

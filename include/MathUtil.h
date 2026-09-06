@@ -11,6 +11,7 @@ namespace Math {
     };
 
     Sphere calculateBoundingSphere(const Vertex* vertices, size_t numVertices);
+    Sphere transformBoundingSphere(const glm::mat4& transform, const glm::vec3& center, float radius);
 }
 
 #endif // _MATH_UTIL_H_

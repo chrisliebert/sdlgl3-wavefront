@@ -36,11 +36,13 @@ public:
     // Initialization and shutdown
     virtual bool initialize(SDL_Window* window) = 0;
     virtual void shutdown() = 0;
+    virtual bool isOpenGL() const { return false; }
 
     // Main rendering call
     virtual void submit(const std::vector<RenderCommand>& commands) = 0;
 
     // Resource management
+    virtual void addTexture(GLuint* textureId, const struct Texture* texture) = 0;
     virtual bool bufferToGpu(const std::vector<Vertex>& vertexData, const std::vector<uint32_t>& indices) = 0;
     virtual void createShadowMap(const std::vector<SceneNode>& nodes) = 0;
     virtual void getShadowMapSize(int& width, int& height) const = 0;

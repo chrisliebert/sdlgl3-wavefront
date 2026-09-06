@@ -302,16 +302,16 @@ bool MyGLApp::startup(std::string_view filename)
         SDL_HideCursor();
     }
 
-    camera = std::make_unique<Camera>();
+    int w = 1280, h = 720;
+    if (window) SDL_GetWindowSize(window, &w, &h);
+    camera = std::make_unique<Camera>(w, h);
     if (appConfig->hasVar("camera.position.x")) camera->position.x = appConfig->getFloat("camera.position.x");
     if (appConfig->hasVar("camera.position.y")) camera->position.y = appConfig->getFloat("camera.position.y");
     if (appConfig->hasVar("camera.position.z")) camera->position.z = appConfig->getFloat("camera.position.z");
 
     sceneLoaderThread = SDL_CreateThread(LoadScene, "MainLoadSceneThread", this);
 
-    GLint viewport[4];
-    glGetIntegerv(GL_VIEWPORT, viewport);
-    glViewport(0, 0, viewport[2], viewport[3]);
+    
 
 
     return runLevel > 0;
@@ -527,8 +527,7 @@ void MyGLApp::start()
 {
     if (runLevel <= 0 || !camera || !appConfig) return;
 
-    GLint viewport[4];
-    glGetIntegerv(GL_VIEWPORT, viewport);
+    
 
     const float groundLevel = appConfig->getFloat("ground.level");
     bool sceneFinishedLoading = false;
@@ -545,8 +544,10 @@ void MyGLApp::start()
         deltaTime = static_cast<double>(frameContext.frameStartTicksNs - lastTimeNs) / 1000000.0;
         lastTimeNs = frameContext.frameStartTicksNs;
         frameContext.deltaTimeMs = deltaTime;
-        frameContext.viewportWidth = viewport[2];
-        frameContext.viewportHeight = viewport[3];
+        int winW = 1280, winH = 720;
+        if (window) SDL_GetWindowSize(window, &winW, &winH);
+        frameContext.viewportWidth = winW;
+        frameContext.viewportHeight = winH;
 
         update(frameContext);
 
@@ -619,9 +620,13 @@ void MyGLApp::start()
                 // Allocate a buffer to hold the pixel data
                 std::vector<unsigned char> pixels(captureWidth * captureHeight * 3);
 
-                // Read the rendered frame from the back buffer before swap.
-                glReadBuffer(GL_FRONT);
-                glReadPixels(0, 0, captureWidth, captureHeight, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+                if (appConfig->getRenderBackend() == RenderBackendType::OPENGL || appConfig->getRenderBackend() == RenderBackendType::AUTO) {
+                    glReadBuffer(GL_FRONT);
+                    glReadPixels(0, 0, captureWidth, captureHeight, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+                } else {
+                    std::cout << "MCP: Capture not implemented for this backend yet." << std::endl;
+                    // Just write a blank image
+                }
 
                 // Write as binary PPM (portable, no external image library required).
                 std::ofstream ppmFile("mcp_capture.ppm", std::ios::binary | std::ios::trunc);
