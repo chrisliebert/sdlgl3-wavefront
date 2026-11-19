@@ -2,6 +2,7 @@
 
 #include "RenderBackend.h"
 #include <glm/glm.hpp>
+#include <glm/vec4.hpp>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -14,6 +15,14 @@
 class Renderer;
 struct Texture;
 struct SDL_Surface;
+
+struct VulkanFrameUniforms
+{
+    glm::mat4 projection{1.0f};
+    glm::mat4 view{1.0f};
+    glm::mat4 lightSpaceMatrix{1.0f};
+    glm::vec4 lightPos{10.0f, 50.0f, 0.0f, 1.0f};
+};
 
 class VulkanBackend : public IRenderBackend
 {
@@ -50,6 +59,8 @@ private:
 
     glm::mat4 m_projectionMatrix{1.0f};
     glm::mat4 m_viewMatrix{1.0f};
+    glm::mat4 m_lightSpaceMatrix{1.0f};
+    glm::vec3 m_lightPos{10.0f, 50.0f, 0.0f};
 
 #ifdef HAVE_VULKAN
     VkInstance m_instance = VK_NULL_HANDLE;
@@ -95,6 +106,23 @@ private:
     std::vector<vkhelpers::VulkanTexture> m_textures;
     VkSampler m_sharedSampler = VK_NULL_HANDLE;
 
+    VkBuffer m_frameUniformBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_frameUniformBufferMemory = VK_NULL_HANDLE;
+    VulkanFrameUniforms m_frameUniforms{};
+
+    VkRenderPass m_shadowRenderPass = VK_NULL_HANDLE;
+    VkPipelineLayout m_shadowPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_shadowPipeline = VK_NULL_HANDLE;
+    VkImage m_shadowDepthImage = VK_NULL_HANDLE;
+    VkDeviceMemory m_shadowDepthImageMemory = VK_NULL_HANDLE;
+    VkImageView m_shadowDepthImageView = VK_NULL_HANDLE;
+    VkSampler m_shadowSampler = VK_NULL_HANDLE;
+    VkFramebuffer m_shadowFramebuffer = VK_NULL_HANDLE;
+    VkFormat m_shadowDepthFormat = VK_FORMAT_UNDEFINED;
+    uint32_t m_shadowWidth = 2048;
+    uint32_t m_shadowHeight = 2048;
+    bool m_shadowResourcesReady = false;
+
     struct TextureCacheKey {
         uint32_t width = 0;
         uint32_t height = 0;
@@ -125,6 +153,18 @@ private:
     bool m_frameReady = false;
 
     VkSampler getOrCreateSharedSampler(uint32_t mipLevels);
+    void updateAllDescriptorSets();
+    void createFrameUniformBuffer();
+    void updateFrameUniformBuffer();
+
+    void createShadowResources();
+    void destroyShadowResources();
+    void createShadowRenderPass();
+    void createShadowPipeline();
+    void createShadowDepthImage();
+    void createShadowFramebuffer();
+    void renderShadowPass(const std::vector<SceneNode>& nodes);
+
     void createInstance();
     void pickPhysicalDevice();
     void createLogicalDevice();

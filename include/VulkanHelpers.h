@@ -141,6 +141,7 @@ struct VulkanTexture {
     VkImage image;
     VkDeviceMemory memory;
     VkImageView view;
+    VkSampler sampler;
     VkDescriptorSet descriptorSet;
 };
 

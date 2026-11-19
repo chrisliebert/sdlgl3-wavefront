@@ -132,9 +132,16 @@ if(GLSLC_EXE)
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/vulkan.frag
         COMMENT "Compiling main.frag to SPIR-V"
     )
+    add_custom_command(
+        OUTPUT ${CMAKE_BINARY_DIR}/shaders/vulkan_shadow_depth.vert.spv
+        COMMAND ${GLSLC_EXE} ${CMAKE_CURRENT_SOURCE_DIR}/shaders/vulkan_shadow_depth.vert -o ${CMAKE_BINARY_DIR}/shaders/vulkan_shadow_depth.vert.spv
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/vulkan_shadow_depth.vert
+        COMMENT "Compiling shadow depth vertex shader to SPIR-V"
+    )
     list(APPEND APP_SOURCES 
         ${CMAKE_BINARY_DIR}/shaders/vulkan.vert.spv 
         ${CMAKE_BINARY_DIR}/shaders/vulkan.frag.spv
+        ${CMAKE_BINARY_DIR}/shaders/vulkan_shadow_depth.vert.spv
     )
 endif()
 
@@ -286,33 +293,11 @@ endif()
 # OpenGL
 find_package(OpenGL REQUIRED)
 
-add_library(imgui_lib STATIC
-    dependencies/imgui/imgui.cpp
-    dependencies/imgui/imgui_draw.cpp
-    dependencies/imgui/imgui_tables.cpp
-    dependencies/imgui/imgui_widgets.cpp
-    dependencies/imgui/backends/imgui_impl_sdl3.cpp
-    dependencies/imgui/backends/imgui_impl_opengl3.cpp
-)
-
-target_include_directories(imgui_lib PUBLIC
-    dependencies/imgui
-    dependencies/imgui/backends
-)
-
-
-
-target_link_libraries(imgui_lib PUBLIC
-    ${SDL_LINK_LIBS}
-    OpenGL::GL
-)
-
 # Link all libraries
 target_link_libraries(sdlglapp PRIVATE
     ${GLAD_LINK_TARGET}
     OpenGL::GL
     ${SDL_LINK_LIBS}
-    imgui_lib
 )
 
 # Copy models and configs to build directory
