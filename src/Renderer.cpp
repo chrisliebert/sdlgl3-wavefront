@@ -1941,6 +1941,7 @@ void Renderer::render(Camera& camera, const FrameContext& frameContext)
             {
                 backend->fitDirectionalShadowMatrix(camera, lightPos, shadowWidth, shadowHeight,
                                                     lightView, lightProjection, currentLightSpaceMatrix);
+                backend->updateLightUniforms(camera, currentLightSpaceMatrix, lightPos);
             }
 
             Uint64 shadowStart = SDL_GetPerformanceCounter();
