@@ -333,6 +333,137 @@ void testFarPlaneBoundary() {
     std::cout << "PASSED" << std::endl;
 }
 
+void testNegativeSphereRadius() {
+    std::cout << "  [TEST] Negative sphere radius handling... ";
+    
+    Frustum frustum;
+    float fov = 45.0f * 3.14159265f / 180.0f;
+    glm::mat4 projection = glm::perspective(fov, 1.0f, 0.1f, 1000.0f);
+    glm::mat4 view = glm::lookAt(
+        glm::vec3(0.0f, 0.0f, 10.0f),
+        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+    frustum.extractFrustum(projection * view);
+
+    // Center deep inside frustum: distance to all planes is > 1.0f
+    // With negative radius -0.5f, test is dist <= -(-0.5f) = 0.5f
+    // Since dist > 0.5f, sphereInFrustum returns true
+    assert(frustum.sphereInFrustum(0.0f, 0.0f, 5.0f, -0.5f) == true);
+
+    // Center very close to near plane (near plane is at z=9.9)
+    // At z=9.85, distance to near plane is ~0.05f < 0.5f, so dist <= -radius (0.5f) triggers false
+    assert(frustum.sphereInFrustum(0.0f, 0.0f, 9.85f, -0.5f) == false);
+
+    // Sphere distance with negative radius should return 0 if rejected
+    assert(frustum.sphereInFrustumDistance(0.0f, 0.0f, 9.85f, -0.5f) == 0.0f);
+
+    std::cout << "PASSED" << std::endl;
+}
+
+void testSphereOutsideNearFarPlanes() {
+    std::cout << "  [TEST] Sphere center outside near/far planes... ";
+
+    Frustum frustum;
+    float fov = 45.0f * 3.14159265f / 180.0f;
+    glm::mat4 projection = glm::perspective(fov, 1.0f, 0.1f, 1000.0f);
+    glm::mat4 view = glm::lookAt(
+        glm::vec3(0.0f, 0.0f, 10.0f),
+        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+    frustum.extractFrustum(projection * view);
+
+    // Behind camera (camera eye at z=10, near plane at z=9.9)
+    // Sphere center at z=15 (5 units behind camera)
+    // Small sphere (radius 1.0) is completely behind near plane -> false
+    assert(frustum.sphereInFrustum(0.0f, 0.0f, 15.0f, 1.0f) == false);
+    assert(frustum.spherePartiallyInFrustum(0.0f, 0.0f, 15.0f, 1.0f) == 0);
+
+    // Large sphere (radius 10.0) crosses near plane into view volume -> true
+    assert(frustum.sphereInFrustum(0.0f, 0.0f, 15.0f, 10.0f) == true);
+    assert(frustum.spherePartiallyInFrustum(0.0f, 0.0f, 15.0f, 10.0f) == 1);
+
+    // Beyond far plane (far plane at z=-990.0)
+    // Sphere center at z=-1050.0
+    // Small sphere (radius 10.0) does not reach far plane -> false
+    assert(frustum.sphereInFrustum(0.0f, 0.0f, -1050.0f, 10.0f) == false);
+    assert(frustum.spherePartiallyInFrustum(0.0f, 0.0f, -1050.0f, 10.0f) == 0);
+
+    // Large sphere (radius 100.0) crosses far plane into view volume -> true
+    assert(frustum.sphereInFrustum(0.0f, 0.0f, -1050.0f, 100.0f) == true);
+    assert(frustum.spherePartiallyInFrustum(0.0f, 0.0f, -1050.0f, 100.0f) == 1);
+
+    std::cout << "PASSED" << std::endl;
+}
+
+void testDegeneratePointCulling() {
+    std::cout << "  [TEST] Degenerate point & polygon culling... ";
+
+    Frustum frustum;
+    float fov = 45.0f * 3.14159265f / 180.0f;
+    glm::mat4 projection = glm::perspective(fov, 1.0f, 0.1f, 1000.0f);
+    glm::mat4 view = glm::lookAt(
+        glm::vec3(0.0f, 0.0f, 10.0f),
+        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+    frustum.extractFrustum(projection * view);
+
+    // Large / extreme coordinates
+    assert(frustum.pointInFrustum(1e7f, 1e7f, 1e7f) == false);
+    assert(frustum.pointInFrustum(-1e7f, -1e7f, -1e7f) == false);
+    assert(frustum.pointInFrustum(0.0f, 0.0f, 1e7f) == false);
+
+    // Degenerate polygon tests:
+    // 0 vertices -> should return false
+    assert(frustum.polygonInFrustum(0, nullptr) == false);
+
+    // 1 vertex inside frustum -> true
+    Point insidePt = {0.0f, 0.0f, 5.0f};
+    assert(frustum.polygonInFrustum(1, &insidePt) == true);
+
+    // 1 vertex outside frustum -> false
+    Point outsidePt = {0.0f, 0.0f, 50.0f};
+    assert(frustum.polygonInFrustum(1, &outsidePt) == false);
+
+    // 3 identical vertices (degenerate collapsed triangle) inside frustum -> true
+    Point degenerateTri[3] = { insidePt, insidePt, insidePt };
+    assert(frustum.polygonInFrustum(3, degenerateTri) == true);
+
+    std::cout << "PASSED" << std::endl;
+}
+
+void testPointsOnFrustumPlanes() {
+    std::cout << "  [TEST] Points on frustum plane boundaries... ";
+
+    Frustum frustum;
+    float fov = 45.0f * 3.14159265f / 180.0f;
+    glm::mat4 projection = glm::perspective(fov, 1.0f, 0.1f, 1000.0f);
+    glm::mat4 view = glm::lookAt(
+        glm::vec3(0.0f, 0.0f, 10.0f),
+        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+    frustum.extractFrustum(projection * view);
+
+    // The near plane is located at z = 10.0 - 0.1 = 9.9 in world space
+    // Plane equation tests: dist <= 0.0f returns false (outside/on-boundary)
+    // Points slightly outside near plane (z > 9.9)
+    assert(frustum.pointInFrustum(0.0f, 0.0f, 9.95f) == false);
+
+    // Points slightly inside near plane (z < 9.9)
+    assert(frustum.pointInFrustum(0.0f, 0.0f, 9.8f) == true);
+
+    // Points slightly outside far plane (far plane at z = 10.0 - 1000.0 = -990.0)
+    assert(frustum.pointInFrustum(0.0f, 0.0f, -995.0f) == false);
+
+    // Points slightly inside far plane
+    assert(frustum.pointInFrustum(0.0f, 0.0f, -985.0f) == true);
+
+    std::cout << "PASSED" << std::endl;
+}
+
 // ============================================================================
 // Test runner
 // ============================================================================
@@ -352,6 +483,10 @@ int runFrustumTests() {
     testTransformedBoundingSphere();
     testNearPlaneBoundary();
     testFarPlaneBoundary();
+    testNegativeSphereRadius();
+    testSphereOutsideNearFarPlanes();
+    testDegeneratePointCulling();
+    testPointsOnFrustumPlanes();
     
     std::cout << "All Frustum tests PASSED!" << std::endl;
     return 0;

@@ -3,65 +3,203 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <limits>
 #include <algorithm>
+#include <random>
+#include <cmath>
+#include <vector>
 
 namespace Math {
 
-Sphere calculateBoundingSphere(const Vertex* vertices, size_t numVertices) {
-    Sphere sphere;
-    if (numVertices == 0) {
-        sphere.center = glm::vec3(0.0f);
-        sphere.radius = 0.0f;
-        return sphere;
+namespace {
+
+inline bool contains(const Sphere& s, const glm::vec3& p) {
+    const float distSq = glm::dot(p - s.center, p - s.center);
+    const float tol = std::max(1e-5f, s.radius * 1e-5f);
+    const float rTol = s.radius + tol;
+    return distSq <= rTol * rTol;
+}
+
+inline Sphere sphereFrom0() {
+    return Sphere{glm::vec3(0.0f), 0.0f};
+}
+
+inline Sphere sphereFrom1(const glm::vec3& p) {
+    return Sphere{p, 0.0f};
+}
+
+inline Sphere sphereFrom2(const glm::vec3& a, const glm::vec3& b) {
+    const glm::vec3 center = (a + b) * 0.5f;
+    const float radius = glm::distance(a, b) * 0.5f;
+    return Sphere{center, radius};
+}
+
+Sphere sphereFrom3(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
+    const glm::vec3 v1 = a - c;
+    const glm::vec3 v2 = b - c;
+    const glm::vec3 n = glm::cross(v1, v2);
+    const float nLenSq = glm::dot(n, n);
+
+    // If points are collinear or degenerate
+    if (nLenSq < 1e-12f) {
+        const float d_ab = glm::dot(a - b, a - b);
+        const float d_bc = glm::dot(b - c, b - c);
+        const float d_ca = glm::dot(c - a, c - a);
+        if (d_ab >= d_bc && d_ab >= d_ca) return sphereFrom2(a, b);
+        if (d_bc >= d_ab && d_bc >= d_ca) return sphereFrom2(b, c);
+        return sphereFrom2(c, a);
     }
 
-    // Find the min and max points along X, Y, and Z axes
-    glm::vec3 min_x = glm::vec3(vertices[0].vertex[0], vertices[0].vertex[1], vertices[0].vertex[2]);
-    glm::vec3 max_x = min_x;
-    glm::vec3 min_y = min_x;
-    glm::vec3 max_y = min_x;
-    glm::vec3 min_z = min_x;
-    glm::vec3 max_z = min_x;
+    // Circumcenter of triangle in 3D
+    const glm::vec3 offset = glm::cross(glm::dot(v1, v1) * v2 - glm::dot(v2, v2) * v1, n) / (2.0f * nLenSq);
+    const glm::vec3 center = c + offset;
+    const float radius = glm::length(offset);
+    Sphere s{center, radius};
 
-    for (size_t i = 1; i < numVertices; ++i) {
-        glm::vec3 p(vertices[i].vertex[0], vertices[i].vertex[1], vertices[i].vertex[2]);
-        if (p.x < min_x.x) min_x = p;
-        if (p.x > max_x.x) max_x = p;
-        if (p.y < min_y.y) min_y = p;
-        if (p.y > max_y.y) max_y = p;
-        if (p.z < min_z.z) min_z = p;
-        if (p.z > max_z.z) max_z = p;
-    }
+    // Check if any 2-point sphere encloses all 3 points with smaller radius (e.g. obtuse triangle)
+    const Sphere s_ab = sphereFrom2(a, b);
+    if (s_ab.radius < s.radius && contains(s_ab, c)) s = s_ab;
+    const Sphere s_bc = sphereFrom2(b, c);
+    if (s_bc.radius < s.radius && contains(s_bc, a)) s = s_bc;
+    const Sphere s_ca = sphereFrom2(c, a);
+    if (s_ca.radius < s.radius && contains(s_ca, b)) s = s_ca;
 
-    const float dist_x_sq = glm::dot(max_x - min_x, max_x - min_x);
-    const float dist_y_sq = glm::dot(max_y - min_y, max_y - min_y);
-    const float dist_z_sq = glm::dot(max_z - min_z, max_z - min_z);
+    return s;
+}
 
-    glm::vec3 p1 = min_x;
-    glm::vec3 p2 = max_x;
-    if (dist_y_sq > dist_x_sq && dist_y_sq > dist_z_sq) {
-        p1 = min_y;
-        p2 = max_y;
-    } else if (dist_z_sq > dist_x_sq && dist_z_sq > dist_y_sq) {
-        p1 = min_z;
-        p2 = max_z;
-    }
-    
-    sphere.center = (p1 + p2) * 0.5f;
-    sphere.radius = glm::distance(p1, p2) * 0.5f;
+Sphere sphereFrom4(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4) {
+    const glm::vec3 v1 = p1 - p4;
+    const glm::vec3 v2 = p2 - p4;
+    const glm::vec3 v3 = p3 - p4;
 
-    for (size_t i = 0; i < numVertices; ++i) {
-        glm::vec3 point(vertices[i].vertex[0], vertices[i].vertex[1], vertices[i].vertex[2]);
-        const float distSq = glm::dot(point - sphere.center, point - sphere.center);
-        if (distSq > sphere.radius * sphere.radius) {
-            const float dist = std::sqrt(distSq);
-            const glm::vec3 dir = (point - sphere.center) / dist;
-            const glm::vec3 p_opposite = sphere.center - sphere.radius * dir;
-            sphere.center = (p_opposite + point) * 0.5f;
-            sphere.radius = glm::length(p_opposite - point) * 0.5f;
+    const glm::vec3 c23 = glm::cross(v2, v3);
+    const glm::vec3 c31 = glm::cross(v3, v1);
+    const glm::vec3 c12 = glm::cross(v1, v2);
+
+    const float det = glm::dot(v1, c23);
+
+    Sphere bestSphere{glm::vec3(0.0f), std::numeric_limits<float>::infinity()};
+
+    // Robust numerical determinant check: if non-degenerate, compute 4-point circumsphere
+    if (std::abs(det) >= 1e-10f) {
+        const glm::vec3 offset = (glm::dot(v1, v1) * c23 +
+                                  glm::dot(v2, v2) * c31 +
+                                  glm::dot(v3, v3) * c12) / (2.0f * det);
+        if (!std::isnan(offset.x) && !std::isnan(offset.y) && !std::isnan(offset.z) &&
+            !std::isinf(offset.x) && !std::isinf(offset.y) && !std::isinf(offset.z)) {
+            bestSphere = Sphere{p4 + offset, glm::length(offset)};
         }
     }
 
-    return sphere;
+    // Check all 4 subsets of 3 points
+    const glm::vec3* pts[4] = { &p1, &p2, &p3, &p4 };
+    for (int i = 0; i < 4; ++i) {
+        for (int j = i + 1; j < 4; ++j) {
+            for (int k = j + 1; k < 4; ++k) {
+                Sphere s = sphereFrom3(*pts[i], *pts[j], *pts[k]);
+                if (s.radius < bestSphere.radius &&
+                    contains(s, p1) && contains(s, p2) &&
+                    contains(s, p3) && contains(s, p4)) {
+                    bestSphere = s;
+                }
+            }
+        }
+    }
+
+    // If still infinite (e.g. collinear), check all 6 pairs of 2 points
+    if (std::isinf(bestSphere.radius)) {
+        for (int i = 0; i < 4; ++i) {
+            for (int j = i + 1; j < 4; ++j) {
+                Sphere s = sphereFrom2(*pts[i], *pts[j]);
+                if (s.radius < bestSphere.radius &&
+                    contains(s, p1) && contains(s, p2) &&
+                    contains(s, p3) && contains(s, p4)) {
+                    bestSphere = s;
+                }
+            }
+        }
+    }
+
+    return bestSphere;
+}
+
+Sphere welzl3(const std::vector<glm::vec3>& P, size_t n, const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3) {
+    Sphere s = sphereFrom3(p1, p2, p3);
+    for (size_t i = 0; i < n; ++i) {
+        if (!contains(s, P[i])) {
+            s = sphereFrom4(p1, p2, p3, P[i]);
+        }
+    }
+    return s;
+}
+
+Sphere welzl2(const std::vector<glm::vec3>& P, size_t n, const glm::vec3& p1, const glm::vec3& p2) {
+    Sphere s = sphereFrom2(p1, p2);
+    for (size_t i = 0; i < n; ++i) {
+        if (!contains(s, P[i])) {
+            s = welzl3(P, i, p1, p2, P[i]);
+        }
+    }
+    return s;
+}
+
+Sphere welzl1(const std::vector<glm::vec3>& P, size_t n, const glm::vec3& p1) {
+    Sphere s = sphereFrom1(p1);
+    for (size_t i = 0; i < n; ++i) {
+        if (!contains(s, P[i])) {
+            s = welzl2(P, i, p1, P[i]);
+        }
+    }
+    return s;
+}
+
+Sphere welzl(std::vector<glm::vec3>& P) {
+    if (P.empty()) return sphereFrom0();
+    if (P.size() == 1) return sphereFrom1(P[0]);
+
+    // Randomize point order for expected linear time
+    std::mt19937 rng(1337);
+    std::shuffle(P.begin(), P.end(), rng);
+
+    Sphere s = sphereFrom2(P[0], P[1]);
+    for (size_t i = 2; i < P.size(); ++i) {
+        if (!contains(s, P[i])) {
+            s = welzl1(P, i, P[i]);
+        }
+    }
+    return s;
+}
+
+} // anonymous namespace
+
+Sphere calculateBoundingSphere(const Vertex* vertices, size_t numVertices) {
+    if (numVertices == 0) return sphereFrom0();
+    if (numVertices == 1) return sphereFrom1(glm::vec3(vertices[0].vertex[0], vertices[0].vertex[1], vertices[0].vertex[2]));
+    if (numVertices == 2) {
+        const glm::vec3 p0(vertices[0].vertex[0], vertices[0].vertex[1], vertices[0].vertex[2]);
+        const glm::vec3 p1(vertices[1].vertex[0], vertices[1].vertex[1], vertices[1].vertex[2]);
+        return sphereFrom2(p0, p1);
+    }
+
+    std::vector<glm::vec3> pts;
+    pts.reserve(numVertices);
+    for (size_t i = 0; i < numVertices; ++i) {
+        pts.emplace_back(vertices[i].vertex[0], vertices[i].vertex[1], vertices[i].vertex[2]);
+    }
+    Sphere s = welzl(pts);
+
+    // Safety pass ensuring exact enclosing boundary despite any float rounding
+    float maxDistSq = 0.0f;
+    for (size_t i = 0; i < numVertices; ++i) {
+        const glm::vec3 p(vertices[i].vertex[0], vertices[i].vertex[1], vertices[i].vertex[2]);
+        const float dSq = glm::dot(p - s.center, p - s.center);
+        if (dSq > maxDistSq) {
+            maxDistSq = dSq;
+        }
+    }
+    const float actualRadius = std::sqrt(maxDistSq);
+    if (actualRadius > s.radius) {
+        s.radius = actualRadius;
+    }
+    return s;
 }
 
 Sphere transformBoundingSphere(const glm::mat4& transform, const glm::vec3& center, float radius) {
@@ -80,4 +218,4 @@ Sphere transformBoundingSphere(const glm::mat4& transform, const glm::vec3& cent
     return Sphere{worldCenter, radius * std::max(1.0f, maxAxisScale)};
 }
 
-}
+} // namespace Math

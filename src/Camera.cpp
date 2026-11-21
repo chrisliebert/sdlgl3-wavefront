@@ -1,5 +1,7 @@
 #include "Camera.h"
 #include <iostream>
+#include <algorithm>
+#include <cmath>
 
 static const double kPi = 3.14159265358979323846;
 
@@ -23,7 +25,7 @@ Camera::Camera(int width, int height)
 void Camera::aim(double x, double y)
 {
     horizontalAngle -= x;
-    verticalAngle += y;
+    verticalAngle = std::clamp(verticalAngle + y, -1.55, 1.55);
 
     direction = glm::vec3(
 		cos(verticalAngle) * sin(horizontalAngle),

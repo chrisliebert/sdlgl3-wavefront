@@ -2,6 +2,7 @@
 #include <algorithm>
 #include "VulkanBackend.h"
 #include "Renderer.h"
+#include "ConfigLoader.h"
 #include "Capture.h"
 #include "SceneNode.h"
 #include "Camera.h"
@@ -268,6 +269,13 @@ bool VulkanBackend::initialize(SDL_Window* window)
 
 #ifdef HAVE_VULKAN
     try {
+        if (m_renderer.configLoader)
+        {
+            if (m_renderer.configLoader->hasVar("shadow.width"))
+                m_shadowWidth = static_cast<uint32_t>(m_renderer.configLoader->getInt("shadow.width"));
+            if (m_renderer.configLoader->hasVar("shadow.height"))
+                m_shadowHeight = static_cast<uint32_t>(m_renderer.configLoader->getInt("shadow.height"));
+        }
         createInstance();
         if (!SDL_Vulkan_CreateSurface(m_window, m_instance, nullptr, &m_surface)) {
             throw std::runtime_error("failed to create window surface!");
@@ -482,62 +490,103 @@ void VulkanBackend::getShadowMapSize(int& width, int& height) const
 
 void VulkanBackend::fitDirectionalShadowMatrix(
     Camera& camera,
-    const glm::vec3& lightPosition,
+    const glm::vec3& /*lightPosition*/,
     int /*shadowWidth*/,
     int /*shadowHeight*/,
     glm::mat4& lightView,
     glm::mat4& lightProjection,
     glm::mat4& lightSpaceMatrix)
 {
-    const glm::mat4 cameraViewProjection = camera.projectionMatrix * camera.modelViewMatrix;
-    const glm::mat4 inverseViewProjection = glm::inverse(cameraViewProjection);
-
-    const std::array<glm::vec3, 8> frustumCorners = {
-        glm::vec3(-1.0f, -1.0f, -1.0f),
-        glm::vec3( 1.0f, -1.0f, -1.0f),
-        glm::vec3(-1.0f,  1.0f, -1.0f),
-        glm::vec3( 1.0f,  1.0f, -1.0f),
-        glm::vec3(-1.0f, -1.0f,  1.0f),
-        glm::vec3( 1.0f, -1.0f,  1.0f),
-        glm::vec3(-1.0f,  1.0f,  1.0f),
-        glm::vec3( 1.0f,  1.0f,  1.0f)
-    };
-
-    glm::vec3 frustumCenter(0.0f);
-    for (const glm::vec3& corner : frustumCorners)
+    glm::vec3 sceneCenter(0.0f);
+    float sceneRadius = 0.0f;
+    bool hasSceneBounds = false;
+    if (!m_renderer.sceneNodes.empty())
     {
-        const glm::vec4 worldCorner = inverseViewProjection * glm::vec4(corner, 1.0f);
-        frustumCenter += glm::vec3(worldCorner) / worldCorner.w;
+        glm::vec3 minP(std::numeric_limits<float>::max());
+        glm::vec3 maxP(std::numeric_limits<float>::lowest());
+        for (const auto& node : m_renderer.sceneNodes)
+        {
+            if (node.boundingSphere <= 0.0f) continue;
+            const glm::vec3 c(node.lx, node.ly, node.lz);
+            const float r = node.boundingSphere;
+            minP = glm::min(minP, c - glm::vec3(r));
+            maxP = glm::max(maxP, c + glm::vec3(r));
+        }
+        if (minP.x <= maxP.x)
+        {
+            sceneCenter = (minP + maxP) * 0.5f;
+            sceneRadius = glm::length(maxP - sceneCenter);
+            hasSceneBounds = (sceneRadius > 0.1f);
+        }
     }
-    frustumCenter /= static_cast<float>(frustumCorners.size());
 
-    const glm::vec3 lightDirection = glm::normalize(frustumCenter - lightPosition);
-    const glm::vec3 lightUp = std::abs(lightDirection.y) > 0.99f
+    glm::vec3 shadowCenter;
+    float sphereRadius = 0.0f;
+    float zPadding = 45.0f;
+
+    if (hasSceneBounds && sceneRadius <= 100.0f)
+    {
+        shadowCenter = sceneCenter;
+        sphereRadius = std::max(sceneRadius * 1.05f, 3.5f);
+        zPadding = std::max(sphereRadius, 10.0f);
+    }
+    else
+    {
+        const float nearDist = 0.1f;
+        float shadowDist = 25.0f;
+        if (m_renderer.configLoader && m_renderer.configLoader->hasVar("shadow.distance"))
+        {
+            shadowDist = m_renderer.configLoader->getFloat("shadow.distance");
+            if (shadowDist <= 5.0f) shadowDist = 25.0f;
+        }
+        const float p11 = (camera.projectionMatrix[1][1] != 0.0f) ? camera.projectionMatrix[1][1] : 2.4142f;
+        const float p00 = (camera.projectionMatrix[0][0] != 0.0f) ? camera.projectionMatrix[0][0] : 1.358f;
+
+        std::array<glm::vec3, 8> frustumCorners;
+        const float distances[2] = { nearDist, shadowDist };
+        int idx = 0;
+        for (float d : distances)
+        {
+            const float h = d / p11;
+            const float w = d / p00;
+            const glm::vec3 c = camera.position + camera.direction * d;
+            frustumCorners[idx++] = c + camera.right * w + camera.up * h;
+            frustumCorners[idx++] = c - camera.right * w + camera.up * h;
+            frustumCorners[idx++] = c + camera.right * w - camera.up * h;
+            frustumCorners[idx++] = c - camera.right * w - camera.up * h;
+        }
+
+        shadowCenter = camera.position;
+
+        for (const glm::vec3& corner : frustumCorners)
+        {
+            sphereRadius = std::max(sphereRadius, glm::distance(corner, shadowCenter));
+        }
+    }
+
+    const glm::vec3 lightDir = glm::normalize(Math::getLightPositionOffset());
+    const glm::vec3 lightUp = std::abs(lightDir.y) > 0.99f
         ? glm::vec3(0.0f, 0.0f, 1.0f)
         : glm::vec3(0.0f, 1.0f, 0.0f);
 
-    lightView = glm::lookAt(lightPosition, frustumCenter, lightUp);
+    const float lightDistance = sphereRadius + zPadding;
+    const glm::vec3 lightEye = shadowCenter + lightDir * lightDistance;
 
-    glm::vec3 minBounds(std::numeric_limits<float>::max());
-    glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
-    for (const glm::vec3& corner : frustumCorners)
-    {
-        const glm::vec4 worldCorner = inverseViewProjection * glm::vec4(corner, 1.0f);
-        const glm::vec4 lightSpaceCorner4 = lightView * (worldCorner / worldCorner.w);
-        const glm::vec3 lightSpaceCorner = glm::vec3(lightSpaceCorner4);
-        minBounds = glm::min(minBounds, lightSpaceCorner);
-        maxBounds = glm::max(maxBounds, lightSpaceCorner);
-    }
+    lightView = glm::lookAt(lightEye, shadowCenter, lightUp);
 
-    constexpr float zPadding = 50.0f;
     lightProjection = glm::ortho(
-        minBounds.x,
-        maxBounds.x,
-        minBounds.y,
-        maxBounds.y,
-        -maxBounds.z - zPadding,
-        -minBounds.z + zPadding);
-    lightSpaceMatrix = lightProjection * lightView;
+        -sphereRadius, sphereRadius,
+        -sphereRadius, sphereRadius,
+        0.0f, 2.0f * lightDistance);
+
+    const glm::mat4 clip = glm::mat4(
+        1.0f,  0.0f, 0.0f, 0.0f,
+        0.0f, -1.0f, 0.0f, 0.0f,
+        0.0f,  0.0f, 0.5f, 0.0f,
+        0.0f,  0.0f, 0.5f, 1.0f
+    );
+
+    lightSpaceMatrix = clip * lightProjection * lightView;
 }
 
 void VulkanBackend::updateLightUniforms(const Camera& camera, const glm::mat4& lightSpaceMatrix, const glm::vec3& lightPos) {
@@ -1491,6 +1540,11 @@ void VulkanBackend::updateFrameUniformBuffer()
         return;
     }
 
+    if (m_inFlightFence != VK_NULL_HANDLE)
+    {
+        vkWaitForFences(m_device, 1, &m_inFlightFence, VK_TRUE, UINT64_MAX);
+    }
+
     void* mapped = nullptr;
     VkResult result = vkMapMemory(m_device, m_frameUniformBufferMemory, 0, sizeof(VulkanFrameUniforms), 0, &mapped);
     if (result != VK_SUCCESS || mapped == nullptr)
@@ -1588,6 +1642,13 @@ void VulkanBackend::destroyShadowResources()
         vkDestroyPipelineLayout(m_device, m_shadowPipelineLayout, nullptr);
         m_shadowPipelineLayout = VK_NULL_HANDLE;
     }
+
+    if (m_shadowDescriptorSetLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(m_device, m_shadowDescriptorSetLayout, nullptr);
+        m_shadowDescriptorSetLayout = VK_NULL_HANDLE;
+    }
+    m_shadowDescriptorSet = VK_NULL_HANDLE;
 
     if (m_shadowRenderPass != VK_NULL_HANDLE)
     {
@@ -1721,9 +1782,9 @@ void VulkanBackend::createShadowDepthImage()
 
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.magFilter = VK_FILTER_NEAREST;
+    samplerInfo.minFilter = VK_FILTER_NEAREST;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
@@ -1795,8 +1856,11 @@ void VulkanBackend::createShadowPipeline()
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = 1.25f;
+    rasterizer.depthBiasSlopeFactor = 1.75f;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -1815,10 +1879,48 @@ void VulkanBackend::createShadowPipeline()
     pushConstant.offset = 0;
     pushConstant.size = sizeof(PushConstants);
 
+    VkDescriptorSetLayoutBinding frameUniformBinding{};
+    frameUniformBinding.binding = 2;
+    frameUniformBinding.descriptorCount = 1;
+    frameUniformBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    frameUniformBinding.pImmutableSamplers = nullptr;
+    frameUniformBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &frameUniformBinding;
+    vkCheck(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_shadowDescriptorSetLayout), "vkCreateDescriptorSetLayout(shadow)");
+
+    if (m_descriptorPool != VK_NULL_HANDLE && m_frameUniformBuffer != VK_NULL_HANDLE)
+    {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = m_descriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &m_shadowDescriptorSetLayout;
+        vkCheck(vkAllocateDescriptorSets(m_device, &allocInfo, &m_shadowDescriptorSet), "vkAllocateDescriptorSets(shadow)");
+
+        VkDescriptorBufferInfo frameUboInfo{};
+        frameUboInfo.buffer = m_frameUniformBuffer;
+        frameUboInfo.offset = 0;
+        frameUboInfo.range = sizeof(VulkanFrameUniforms);
+
+        VkWriteDescriptorSet descriptorWrite{};
+        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite.dstSet = m_shadowDescriptorSet;
+        descriptorWrite.dstBinding = 2;
+        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrite.descriptorCount = 1;
+        descriptorWrite.pBufferInfo = &frameUboInfo;
+
+        vkUpdateDescriptorSets(m_device, 1, &descriptorWrite, 0, nullptr);
+    }
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &m_descriptorSetLayout;
+    pipelineLayoutInfo.pSetLayouts = &m_shadowDescriptorSetLayout;
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &pushConstant;
 
@@ -1883,14 +1985,9 @@ void VulkanBackend::renderShadowPass(const std::vector<SceneNode>& nodes)
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
 
-    VkDescriptorSet ds = VK_NULL_HANDLE;
-    if (!m_textures.empty())
+    if (m_shadowDescriptorSet != VK_NULL_HANDLE)
     {
-        ds = m_textures[0].descriptorSet;
-    }
-    if (ds != VK_NULL_HANDLE)
-    {
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipelineLayout, 0, 1, &ds, 0, nullptr);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipelineLayout, 0, 1, &m_shadowDescriptorSet, 0, nullptr);
     }
 
     VkBuffer vertexBuffers[] = { m_vertexBuffer };

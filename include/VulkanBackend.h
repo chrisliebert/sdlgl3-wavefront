@@ -113,6 +113,8 @@ private:
     VkRenderPass m_shadowRenderPass = VK_NULL_HANDLE;
     VkPipelineLayout m_shadowPipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_shadowPipeline = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_shadowDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet m_shadowDescriptorSet = VK_NULL_HANDLE;
     VkImage m_shadowDepthImage = VK_NULL_HANDLE;
     VkDeviceMemory m_shadowDepthImageMemory = VK_NULL_HANDLE;
     VkImageView m_shadowDepthImageView = VK_NULL_HANDLE;

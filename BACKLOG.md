@@ -1,5 +1,38 @@
 | id | lane | owner agent | files owned | status | verification command | result |
 |----|------|-------------|-------------|--------|----------------------|--------|
 | T1 | L1 | agent-L1-1 | build/CMakeCache.txt, build/ | merged | `cmake --build build --config Debug -j 6` | Build succeeded (exit code 0) |
-| T2 | L4 | agent-L4-1 | docs/images/ | in progress | `e2e_screenshot` | — |
-| T3 | L5 | agent-L5-1 | README.md | in progress | `grep "![screenshot" README.md` | — |
+| T2 | L4 | agent-L4-1 | docs/images/ | merged | `e2e_screenshot` | Completed |
+| T3 | L5 | agent-L5-1 | README.md | merged | `grep "![screenshot" README.md` | Completed |
+| T4 | L1 | agent-L1-2 | CMakeLists.txt, src/SceneNode.cpp | merged | `cmake --build build` | Dead code removed from SceneNode.cpp, clean build (exit code 0) |
+| T5 | L3 | agent-L3-1 | src/MathUtil.cpp, include/MathUtil.h, src/Renderer.cpp, include/Renderer.h | merged | `cmake --build build` | Welzl minimal bounding sphere, occlusion query leak fix, multi-format texture detection merged (exit code 0) |
+| T6 | L4 | agent-L4-2 | tests/CMakeLists.txt, tests/test_main.cpp, tests/test_math.cpp, tests/test_cache.cpp, tests/test_frustum.cpp | merged | `cmake --build build; build\tests\Debug\unit_tests.exe` | 7 test suites passed, 0 failed |
+| T7 | L5 | agent-L5-2 | PHD_CRITICAL_REVIEW.md, BACKLOG.md | merged | `git diff --stat PHD_CRITICAL_REVIEW.md` | Updated PhD Critical Review and Review Board Third Polish defense |
+| T8 | L2 | agent-L2-1 | src/OpenGLBackend.cpp, include/OpenGLBackend.h, src/VulkanBackend.cpp, include/VulkanBackend.h, shaders/vulkan.frag, shaders/vulkan.vert, shaders/vulkan_shadow_depth.vert, shaders/shadow_mapping.frag | merged | `cmake --build build` | Fixed directional sunlight vector, Vulkan shadow clip transform, depth compare, descriptor isolation, and GL nearest filter (exit code 0) |
+| T9 | L3 | agent-L3-1 | src/Renderer.cpp, include/Renderer.h, src/Camera.cpp, include/Camera.h, src/main.cpp | merged | `cmake --build build` | Eliminated double-aiming, added pitch clamping [-1.55, 1.55], synchronized initial camera angles, and fixed shadow map/uniform sync (exit code 0) |
+| T10 | L4 | agent-L4-1 | tests/CMakeLists.txt, tests/test_camera.cpp, tests/test_main.cpp, tests/test_shadow.cpp | merged | `cmake --build build; ctest --test-dir build -C Debug --output-on-failure` | 8/8 test suites passed (added pitch clamping, angle sync, and directional shadow stability suites) |
+| T11 | L5 | agent-L5-1 | BACKLOG.md | merged | `git status` | Task board fully updated and reconciled |
+| T12 | L4 | agent-L4-1 | check_ppm.cpp, test.cpp, test_cfg.cpp, test_win.cpp, test_window.cpp, mcp_capture.ppm | merged | `cmake --build build ; ctest --test-dir build -C Debug --output-on-failure` | Obsolete root scratch tests and mcp_capture.ppm removed; clean build and 8/8 unit test suites passed |
+| T13 | L5 | agent-L5-1 | append_gl.py, dummy.py, repl.py, repl.txt, repl2.py, repl3.py, replacement1.txt, replacement2.txt, repl_brace.py, repl_clip.py, repl_depth.py, repl_ren.py, repl_tex.py, repl_tex2.py, repl_vb_h.py, repl_vulkan_tex.py, all_returns.txt, returns_to_replace.txt, return_false_others.txt, task.md, test_output.txt | merged | `git status` | Cleaned 21 scratch replacement scripts, grep text dumps, and old task notes from root |
+| T14 | L1 | agent-L1-3 | config/renderer.cfg, config/app.cfg | merged | `cmake --build build` | Disabled default cull debug wireframe overlay in renderer.cfg; verified app.cfg settings (exit code 0) |
+| T15 | L2 | agent-L2-2 | src/VulkanBackend.cpp, src/OpenGLBackend.cpp, shaders/vulkan.frag, shaders/vulkan.vert, shaders/shadow_mapping.frag | merged | `cmake --build build` | Vulkan uniform buffer fence sync, shadow pipeline rasterizer cull NONE, shadow sampler NEAREST, position-centered shadow bounds, parallel sun vector, tuned bias, and untextured mesh fallback |
+| T16 | L3 | agent-L3-2 | src/Renderer.cpp | merged | `cmake --build build --config Debug` | Removed camera.direction check from shadow dirty tracking, preventing per-frame vkQueueWaitIdle stalls during mouse look; updated light uniforms per-frame |
+| T17 | L4 | agent-L4-2 | tests/test_shadow.cpp, tests/test_camera.cpp | merged | `ctest --test-dir build -C Debug --output-on-failure` | 8/8 test suites passed (100% success); added directional shadow rotation invariance, shadow bias bounds/Peter-Panning safety, and camera angle sync suites |
+| T18 | L5 | agent-L5-2 | BACKLOG.md | merged | `git status` | Task board fully synchronized and all tasks merged per protocol |
+| T19 | L1 | agent-L1-4 | config/renderer.cfg | merged | `cmake --build build` | Set renderer.verbose=false in renderer.cfg to disable repetitive console logging |
+| T20 | L2 | agent-L2-3 | src/VulkanBackend.cpp, shaders/vulkan.frag, shaders/shadow_mapping.frag | merged | `cmake --build build` | Enabled hardware rasterizer depth bias in Vulkan shadow pipeline and calibrated slope-scaled bias (0.0015 slope / 0.00035 min) in Vulkan/GL shaders, eliminating shadow acne |
+| T21 | L3 | agent-L3-3 | src/Renderer.cpp | merged | `cmake --build build --config Debug` | Removed periodic debug frustum cull logging statement from Renderer::render() |
+| T22 | L4 | agent-L4-3 | tests/test_shadow.cpp | merged | `ctest --test-dir build -C Debug --output-on-failure` | 8/8 test suites passed; updated shadow bias bounds assertions to [0.00035, 0.002] validating acne elimination and Peter-Panning safety |
+| T23 | L5 | agent-L5-3 | BACKLOG.md | merged | `git status` | Task board synchronized and verified across all lanes |
+| T24 | L1 | agent-L1-5 | config/renderer.cfg | merged | `cmake --build build` | Added shadow.distance=45.0 in renderer.cfg for high-density directional shadow frustum coverage |
+| T25 | L2 | agent-L2-4 | src/VulkanBackend.cpp, src/OpenGLBackend.cpp, shaders/vulkan.frag, shaders/shadow_mapping.frag | merged | `cmake --build build` | Tightened shadowDist to 45.0f with zPadding 60.0f (3.5x linear resolution / 12x higher texel density) and integrated 16-sample Poisson disk PCF filter |
+| T26 | L4 | agent-L4-4 | tests/test_shadow.cpp | merged | `ctest --test-dir build -C Debug --output-on-failure` | 8/8 test suites passed; added suite verifying high-density shadow volume bounds and non-degeneracy |
+| T27 | L5 | agent-L5-4 | BACKLOG.md | merged | `git status` | Task board synchronized and verified across all lanes |
+| T28 | L1 | agent-L1-6 | config/renderer.cfg | merged | `cmake --build build` | Configured 4096x4096 shadow resolution in renderer.cfg |
+| T29 | L2 | agent-L2-5 | src/VulkanBackend.cpp, src/OpenGLBackend.cpp, shaders/vulkan.frag, shaders/shadow_mapping.frag | merged | `cmake --build build` | Initialized Vulkan shadow dimensions from config; tightened shadow volume to 25.0f with 45.0f zPadding; tuned Poisson filter radius to 2.0 |
+| T30 | L4 | agent-L4-5 | tests/test_shadow.cpp | merged | `ctest --test-dir build -C Debug --output-on-failure` | 8/8 test suites passed; verified shadow matrix bounds for shadowDist=25.0f and radius<=40.0f |
+| T31 | L5 | agent-L5-5 | BACKLOG.md | merged | `git status` | Task board synchronized and verified across all lanes |
+| T32 | L1 | agent-L1-7 | config/renderer.cfg | in progress | `cmake --build build` | — |
+| T33 | L2 | agent-L2-6 | src/VulkanBackend.cpp, src/OpenGLBackend.cpp, shaders/vulkan.frag, shaders/shadow_mapping.frag | in progress | `cmake --build build` | — |
+| T34 | L3 | agent-L3-4 | src/Renderer.cpp | in progress | `cmake --build build` | — |
+| T35 | L4 | agent-L4-6 | tests/test_shadow.cpp | in progress | `ctest --test-dir build -C Debug --output-on-failure` | — |
+| T36 | L5 | agent-L5-6 | BACKLOG.md | decomposed | `git status` | — |

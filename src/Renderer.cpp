@@ -93,9 +93,16 @@ void Renderer::addSceneNode(SceneNode node)
 namespace {
     int getTextureMode(SDL_Surface* image)
     {
-        int bpp = 0;
-            bpp = static_cast<int>(SDL_BYTESPERPIXEL(image->format));
-        return (bpp == 4) ? GL_RGBA : GL_RGB;
+        if (!image) return GL_RGBA;
+        int bpp = static_cast<int>(SDL_BYTESPERPIXEL(image->format));
+        switch (bpp)
+        {
+            case 1: return GL_RED;
+            case 2: return GL_RG;
+            case 3: return GL_RGB;
+            case 4: return GL_RGBA;
+            default: return GL_RGBA;
+        }
     }
 
     std::string toLowerAscii(std::string value)
@@ -178,6 +185,17 @@ namespace {
 
 std::shared_ptr<Texture> Renderer::textureFromSurface(std::unique_ptr<SDL_Surface, SdlSurfaceDeleter> image)
 {
+    if (!image) return nullptr;
+
+    if (SDL_ISPIXELFORMAT_INDEXED(image->format))
+    {
+        SDL_Surface* converted = SDL_ConvertSurface(image.get(), SDL_PIXELFORMAT_RGBA32);
+        if (converted)
+        {
+            image.reset(converted);
+        }
+    }
+
     auto texture = std::make_shared<Texture>();
     texture->mode = getTextureMode(image.get());
     texture->width = static_cast<unsigned>(image->w);
@@ -1695,6 +1713,15 @@ void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)
 
     rebuildScenegraph();
 
+    if (!occlusionQueries.empty())
+    {
+        if (backend && backend->isOpenGL())
+        {
+            glDeleteQueries(static_cast<GLsizei>(occlusionQueries.size()), occlusionQueries.data());
+        }
+        occlusionQueries.clear();
+    }
+
     if (occlusionCullingEnabled)
     {
         occlusionQueries.resize(sceneNodes.size(), 0);
@@ -1702,6 +1729,7 @@ void Renderer::bufferToGpu(Camera& camera, bool loadCachedScene)
         occlusionVisible.assign(sceneNodes.size(), 1);
         occlusionSkipCounters.assign(sceneNodes.size(), 0);
     }
+    shadowDirty = true;
 }
 
 int Renderer::buildCullNode(std::vector<int>& sortedIndices, int start, int end)
@@ -1863,12 +1891,13 @@ void Renderer::updateOcclusionQueryResults()
     }
 }
 
-void Renderer::enableShadows() { shadowsEnabled = true; }
+void Renderer::enableShadows() { shadowsEnabled = true; shadowDirty = true; }
 void Renderer::disableShadows() { shadowsEnabled = false; }
 
 GLuint Renderer::createShadowMap(Camera& camera)
 {
-    if (shadowMap == 0)
+    (void)camera;
+    if (backend)
     {
         backend->createShadowMap(sceneNodes);
         backend->getShadowMapSize(shadowWidth, shadowHeight);
@@ -1895,37 +1924,47 @@ void Renderer::render(Camera& camera, const FrameContext& frameContext)
     int visibleNodes = 0;
     int occlusionCulledNodes = 0;
 
-    // Fix: Use consistent light position (was previously camera.position + glm::vec3(0.0f, 100.0f, 0.0f) in bufferToGpu)
-    const glm::vec3 lightPos = camera.position + Math::getLightPositionOffset();
-    glm::mat4 lightProjection, lightView, lightSpaceMatrix;
-    
-    backend->fitDirectionalShadowMatrix(camera, lightPos, shadowWidth, shadowHeight,
-                                               lightView, lightProjection, lightSpaceMatrix);
+    const glm::vec3 lightPos = Math::getLightPositionOffset();
+    glm::mat4 lightProjection, lightView;
 
     if (shadowsEnabled)
     {
-        const bool lightMoved = !shadowInitialized || glm::distance(lastShadowLightPos, lightPos) > 0.001f;
+        const bool cameraMoved = false;
+        const bool lightMoved = !shadowInitialized ||
+            glm::distance(lastShadowLightPos, lightPos) > 0.001f;
         const bool sceneChanged = (sceneRevision != shadowSceneRevision);
-        shadowDirty = shadowDirty || lightMoved || sceneChanged;
+        shadowDirty = shadowDirty || !shadowInitialized || cameraMoved || lightMoved || sceneChanged;
 
         if (shadowDirty)
         {
+            if (backend)
+            {
+                backend->fitDirectionalShadowMatrix(camera, lightPos, shadowWidth, shadowHeight,
+                                                    lightView, lightProjection, currentLightSpaceMatrix);
+            }
+
             Uint64 shadowStart = SDL_GetPerformanceCounter();
             shadowMap = createShadowMap(camera);
             const double perfFreq = static_cast<double>(SDL_GetPerformanceFrequency());
             shadowPassMs = (static_cast<double>(SDL_GetPerformanceCounter() - shadowStart) * 1000.0) / perfFreq;
 
             lastShadowLightPos = lightPos;
+            lastShadowCameraPos = camera.position;
+            lastShadowCameraDir = camera.direction;
             shadowSceneRevision = sceneRevision;
             shadowInitialized = true;
             shadowDirty = false;
         }
     }
+    else if (backend)
+    {
+        backend->fitDirectionalShadowMatrix(camera, lightPos, shadowWidth, shadowHeight,
+                                            lightView, lightProjection, currentLightSpaceMatrix);
+    }
 
-    // Fix: Pass the computed light space matrix to the backend for per-frame updates
     if (backend)
     {
-        backend->updateLightUniforms(camera, lightSpaceMatrix, lightPos);
+        backend->updateLightUniforms(camera, currentLightSpaceMatrix, lightPos);
     }
 
     backend->beginFrame(frameContext);
@@ -1962,11 +2001,6 @@ void Renderer::render(Camera& camera, const FrameContext& frameContext)
 
     const int frustumCulledNodes = static_cast<int>(sceneNodes.size()) - static_cast<int>(visibleNodeIdsScratch.size());
     debugVisibleNodeIds = visibleNodeIdsScratch;
-    if (isVerboseEnabled() && (debugFrameCounter % 30 == 0))
-    {
-        std::cout << "Frustum cull: visible " << visibleNodeIdsScratch.size() << "/"
-                  << sceneNodes.size() << " culled " << frustumCulledNodes << std::endl;
-    }
 
     visibleNodesSortedScratch.clear();
     visibleNodesSortedScratch.reserve(visibleNodeIdsScratch.size());

@@ -45,20 +45,25 @@ float ShadowCalculation(vec4 fragPosLightSpace)
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     // Transform to [0,1] range
     projCoords = projCoords * 0.5 + 0.5;
+
+    // Fragments outside the shadow map frustum receive unshadowed light.
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0 || projCoords.z < 0.0 || projCoords.z > 1.0)
+    {
+        return 0.0;
+    }
+
     // Get closest depth value from light's perspective (using [0,1] range fragPosLight as coords)
     float closestDepth = texture(shadowMap, projCoords.xy).r; 
     // Get depth of current fragment from light's perspective
     float currentDepth = projCoords.z;
     // Calculate bias (based on depth map resolution and slope)
     vec3 normal = normalize(fs_in.Normal);
-    vec3 lightDir = normalize(lightPos - fs_in.FragPos);
-    float bias = max(0.0035 * (1.0 - dot(normal, lightDir)), 0.00075);
-    // Check whether current frag pos is in shadow
-    // float shadow = currentDepth - bias > closestDepth  ? 1.0 : 0.0;
+    vec3 lightDir = normalize(lightPos);
+    float bias = max(0.0015 * (1.0 - dot(normal, lightDir)), 0.00035);
     // PCF
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
-    float filterRadius = 2.25;
+    float filterRadius = 2.0;
     for(int i = 0; i < 16; ++i)
     {
         float pcfDepth = texture(shadowMap, projCoords.xy + poissonDisk[i] * texelSize * filterRadius).r;
@@ -66,10 +71,6 @@ float ShadowCalculation(vec4 fragPosLightSpace)
     }
     shadow /= 16.0;
     
-    // Keep the shadow at 0.0 when outside the far_plane region of the light's frustum.
-    if(projCoords.z > 1.0)
-        shadow = 0.0;
-        
     return shadow;
 }
 
@@ -105,9 +106,9 @@ void main()
 
     vec3 lightColor = vec3(0.3);
     // Ambient
-    vec3 ambient = 0.3 * color;
+    vec3 ambient = 0.25 * color;
     // Diffuse
-    vec3 lightDir = normalize(lightPos - fs_in.FragPos);
+    vec3 lightDir = normalize(lightPos);
     float diff = max(dot(lightDir, normal), 0.0);
     vec3 diffuse = diff * lightColor;
     // Specular
@@ -126,7 +127,7 @@ void main()
     vec3 specular = spec * lightColor * specMapStrength;
     // Calculate shadow
     float shadow = shadows ? ShadowCalculation(fs_in.FragPosLightSpace) : 0.0;
-    vec3 lighting = (ambient + (1.0 - shadow) * (diffuse + specular)) * color;
+    vec3 lighting = ambient + (1.0 - shadow) * (diffuse + specular) * color;
     if (dot(lighting, lighting) < 1e-6)
         lighting = color;
     FragColor = vec4(lighting, 1.0f);

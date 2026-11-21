@@ -11,6 +11,8 @@
 #include <string_view>
 #include <atomic>
 #include <limits>
+#include <cmath>
+#include <algorithm>
 
 #if __has_include("stb_image_write.h")
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -506,14 +508,7 @@ void MyGLApp::update(const FrameContext& frameContext)
     const bool moveLeftActive = moveLeftPressed || pollLeft;
     const bool sprintActive = sprintPressed || pollSprint;
 
-    if (windowGrab)
-    {
-        float relX = 0.0f;
-        float relY = 0.0f;
-        SDL_GetRelativeMouseState(&relX, &relY);
-        if (relX != 0.0f || relY != 0.0f)
-            camera->aim(mouseSpeed * static_cast<double>(relX), -mouseSpeed * static_cast<double>(relY));
-    }
+
 
     // Convert to seconds so movement speed is stable across different frame rates.
     const double deltaSeconds = frameContext.deltaTimeMs * 0.001;
@@ -599,6 +594,8 @@ void MyGLApp::start()
 
                 camera->position = center + glm::vec3(0.0f, radius * 0.35f, radius * 2.5f);
                 camera->direction = glm::normalize(center - camera->position);
+                camera->horizontalAngle = std::atan2(camera->direction.x, camera->direction.z);
+                camera->verticalAngle = std::asin(std::clamp(camera->direction.y, -1.0f, 1.0f));
                 const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
                 camera->right = glm::normalize(glm::cross(camera->direction, worldUp));
                 camera->up = glm::normalize(glm::cross(camera->right, camera->direction));

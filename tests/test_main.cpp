@@ -3,10 +3,13 @@
 
 // Forward declarations of test runners
 int runFrustumTests();
+int runMathTests();
+int runCacheTests();
 int runConfigLoaderTests();
 int runCameraTests();
 int runSceneNodeTests();
 int runGpuProgramTests();
+int runShadowTests();
 
 struct TestSuite {
     const char* name;
@@ -20,10 +23,13 @@ int main() {
     
     TestSuite suites[] = {
         {"Frustum Culling", runFrustumTests},
+        {"Math & Bounding Sphere", runMathTests},
+        {"Cache Round-Trip & Schema", runCacheTests},
         {"ConfigLoader", runConfigLoaderTests},
         {"Camera", runCameraTests},
         {"SceneNode", runSceneNodeTests},
         {"GpuProgram", runGpuProgramTests},
+        {"Shadow Projection Stability", runShadowTests},
     };
     
     int totalPassed = 0;

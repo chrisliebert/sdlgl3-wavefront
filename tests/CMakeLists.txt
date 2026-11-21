@@ -8,10 +8,13 @@ enable_testing()
 set(TEST_SOURCES
     test_main.cpp
     test_frustum.cpp
+    test_math.cpp
+    test_cache.cpp
     test_config_loader.cpp
     test_camera.cpp
     test_scenenode.cpp
     test_gpu_program.cpp
+    test_shadow.cpp
     ../src/Frustum.cpp
     ../src/ConfigLoader.cpp
     ../src/GpuProgram.cpp

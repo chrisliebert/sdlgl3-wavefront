@@ -35,7 +35,7 @@
 // ============================================================================
 namespace Math
 {
-    inline constexpr glm::vec3 getLightPositionOffset() { return glm::vec3(10.0f, 50.0f, 0.0f); }
+    inline constexpr glm::vec3 getLightPositionOffset() { return glm::vec3(30.0f, 60.0f, 20.0f); }
 }
 
 // ============================================================================

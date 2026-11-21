@@ -256,12 +256,9 @@ void OpenGLBackend::submit(const std::vector<RenderCommand>& commands)
         }
     }
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(prevElementArrayBuffer));
-    glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(prevArrayBuffer));
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
-    glDisableVertexAttribArray(2);
     glBindVertexArray(static_cast<GLuint>(prevVao));
+    glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(prevArrayBuffer));
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(prevElementArrayBuffer));
 }
 
 // ============================================================================
@@ -406,7 +403,6 @@ bool OpenGLBackend::bufferToGpu(const std::vector<Vertex>& vertexData, const std
     }
 
     glBindVertexArray(0);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     // Create FBO for shadow map
@@ -455,8 +451,8 @@ void OpenGLBackend::createShadowMap(const std::vector<SceneNode>& nodes)
         glBindTexture(GL_TEXTURE_2D, shadowMap);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, shadowWidthW, shadowHeightH, 0, 
                      GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
         constexpr GLfloat borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -506,65 +502,100 @@ void OpenGLBackend::createShadowMap(const std::vector<SceneNode>& nodes)
         }
     }
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(prevElementArrayBuffer));
-    glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(prevArrayBuffer));
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
-    glDisableVertexAttribArray(2);
     glBindVertexArray(static_cast<GLuint>(prevVao));
+    glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(prevArrayBuffer));
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(prevElementArrayBuffer));
     glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     glBindTexture(GL_TEXTURE_2D, shadowMap);
 }
 
 void OpenGLBackend::fitDirectionalShadowMatrix(Camera& camera,
-    const glm::vec3& lightPosition,
+    const glm::vec3& /*lightPosition*/,
     int /*shadowWidth*/, int /*shadowHeight*/,
     glm::mat4& lightView, glm::mat4& lightProjection, glm::mat4& lightSpaceMatrix)
 {
-    const glm::mat4 cameraViewProjection = camera.projectionMatrix * camera.modelViewMatrix;
-    const glm::mat4 inverseViewProjection = glm::inverse(cameraViewProjection);
-
-    const std::array<glm::vec3, 8> frustumCorners = {
-        glm::vec3(-1.0f, -1.0f, -1.0f),
-        glm::vec3( 1.0f, -1.0f, -1.0f),
-        glm::vec3(-1.0f,  1.0f, -1.0f),
-        glm::vec3( 1.0f,  1.0f, -1.0f),
-        glm::vec3(-1.0f, -1.0f,  1.0f),
-        glm::vec3( 1.0f, -1.0f,  1.0f),
-        glm::vec3(-1.0f,  1.0f,  1.0f),
-        glm::vec3( 1.0f,  1.0f,  1.0f)
-    };
-
-    glm::vec3 frustumCenter(0.0f);
-    for (const glm::vec3& corner : frustumCorners)
+    glm::vec3 sceneCenter(0.0f);
+    float sceneRadius = 0.0f;
+    bool hasSceneBounds = false;
+    if (!owner.sceneNodes.empty())
     {
-        const glm::vec4 worldCorner = inverseViewProjection * glm::vec4(corner, 1.0f);
-        frustumCenter += glm::vec3(worldCorner) / worldCorner.w;
+        glm::vec3 minP(std::numeric_limits<float>::max());
+        glm::vec3 maxP(std::numeric_limits<float>::lowest());
+        for (const auto& node : owner.sceneNodes)
+        {
+            if (node.boundingSphere <= 0.0f) continue;
+            const glm::vec3 c(node.lx, node.ly, node.lz);
+            const float r = node.boundingSphere;
+            minP = glm::min(minP, c - glm::vec3(r));
+            maxP = glm::max(maxP, c + glm::vec3(r));
+        }
+        if (minP.x <= maxP.x)
+        {
+            sceneCenter = (minP + maxP) * 0.5f;
+            sceneRadius = glm::length(maxP - sceneCenter);
+            hasSceneBounds = (sceneRadius > 0.1f);
+        }
     }
-    frustumCenter /= static_cast<float>(frustumCorners.size());
 
-    const glm::vec3 lightDirection = glm::normalize(frustumCenter - lightPosition);
-    const glm::vec3 lightUp = std::abs(lightDirection.y) > 0.99f
+    glm::vec3 shadowCenter;
+    float sphereRadius = 0.0f;
+    float zPadding = 45.0f;
+
+    if (hasSceneBounds && sceneRadius <= 100.0f)
+    {
+        shadowCenter = sceneCenter;
+        sphereRadius = std::max(sceneRadius * 1.05f, 3.5f);
+        zPadding = std::max(sphereRadius, 10.0f);
+    }
+    else
+    {
+        const float nearDist = 0.1f;
+        float shadowDist = 25.0f;
+        if (owner.configLoader && owner.configLoader->hasVar("shadow.distance"))
+        {
+            shadowDist = owner.configLoader->getFloat("shadow.distance");
+            if (shadowDist <= 5.0f) shadowDist = 25.0f;
+        }
+        const float p11 = (camera.projectionMatrix[1][1] != 0.0f) ? camera.projectionMatrix[1][1] : 2.4142f;
+        const float p00 = (camera.projectionMatrix[0][0] != 0.0f) ? camera.projectionMatrix[0][0] : 1.358f;
+
+        std::array<glm::vec3, 8> frustumCorners;
+        const float distances[2] = { nearDist, shadowDist };
+        int idx = 0;
+        for (float d : distances)
+        {
+            const float h = d / p11;
+            const float w = d / p00;
+            const glm::vec3 c = camera.position + camera.direction * d;
+            frustumCorners[idx++] = c + camera.right * w + camera.up * h;
+            frustumCorners[idx++] = c - camera.right * w + camera.up * h;
+            frustumCorners[idx++] = c + camera.right * w - camera.up * h;
+            frustumCorners[idx++] = c - camera.right * w - camera.up * h;
+        }
+
+        shadowCenter = camera.position;
+
+        for (const glm::vec3& corner : frustumCorners)
+        {
+            sphereRadius = std::max(sphereRadius, glm::distance(corner, shadowCenter));
+        }
+    }
+
+    const glm::vec3 lightDir = glm::normalize(Math::getLightPositionOffset());
+    const glm::vec3 lightUp = std::abs(lightDir.y) > 0.99f
         ? glm::vec3(0.0f, 0.0f, 1.0f)
         : glm::vec3(0.0f, 1.0f, 0.0f);
 
-    lightView = glm::lookAt(lightPosition, frustumCenter, lightUp);
+    const float lightDistance = sphereRadius + zPadding;
+    const glm::vec3 lightEye = shadowCenter + lightDir * lightDistance;
 
-    glm::vec3 minBounds(std::numeric_limits<float>::max());
-    glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
-    for (const glm::vec3& corner : frustumCorners)
-    {
-        const glm::vec4 worldCorner = inverseViewProjection * glm::vec4(corner, 1.0f);
-        const glm::vec4 lightSpaceCorner4 = lightView * (worldCorner / worldCorner.w);
-        const glm::vec3 lightSpaceCorner = glm::vec3(lightSpaceCorner4);
-        minBounds = glm::min(minBounds, lightSpaceCorner);
-        maxBounds = glm::max(maxBounds, lightSpaceCorner);
-    }
+    lightView = glm::lookAt(lightEye, shadowCenter, lightUp);
 
-    constexpr float zPadding = 50.0f;
-    lightProjection = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y,
-        -maxBounds.z - zPadding, -minBounds.z + zPadding);
+    lightProjection = glm::ortho(
+        -sphereRadius, sphereRadius,
+        -sphereRadius, sphereRadius,
+        0.0f, 2.0f * lightDistance);
     lightSpaceMatrix = lightProjection * lightView;
 }
 
@@ -714,8 +745,10 @@ void OpenGLBackend::drawCullDebugOverlay(const Camera& camera, const std::vector
     }};
     for (size_t i = 0; i < edges.size(); i += 2)
     {
-        const glm::vec3 a = glm::vec3(inverseProjection * glm::vec4(ndcCorners[edges[i]], 1.0f)) / glm::vec4(ndcCorners[edges[i]], 1.0f).w;
-        const glm::vec3 b = glm::vec3(inverseProjection * glm::vec4(ndcCorners[edges[i + 1]], 1.0f)) / glm::vec4(ndcCorners[edges[i + 1]], 1.0f).w;
+        const glm::vec4 aWorld = inverseProjection * glm::vec4(ndcCorners[edges[i]], 1.0f);
+        const glm::vec3 a = glm::vec3(aWorld) / aWorld.w;
+        const glm::vec4 bWorld = inverseProjection * glm::vec4(ndcCorners[edges[i + 1]], 1.0f);
+        const glm::vec3 b = glm::vec3(bWorld) / bWorld.w;
         frustumLines.push_back(a);
         frustumLines.push_back(b);
     }

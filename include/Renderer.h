@@ -171,6 +171,9 @@ private:
     bool shadowDirty = true;
     bool shadowInitialized = false;
     glm::vec3 lastShadowLightPos{0.0f, 0.0f, 0.0f};
+    glm::vec3 lastShadowCameraPos{0.0f, 0.0f, 0.0f};
+    glm::vec3 lastShadowCameraDir{0.0f, 0.0f, 0.0f};
+    glm::mat4 currentLightSpaceMatrix{1.0f};
     size_t sceneRevision = 0;
     size_t shadowSceneRevision = 0;
     std::unique_ptr<IRenderBackend> backend;
