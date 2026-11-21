@@ -1,0 +1,15 @@
+# Application configuration
+
+# renderer.backend can be "auto", "opengl", or "vulkan"
+renderer.backend = vulkan
+
+camera.speed = 0.5
+mouse.speed = 0.005
+window.grab = true
+mouse.show = false
+useBinObjCache = true
+ground.level = 1.0
+closeOnLoad = false
+window.title = sdlgl3-wavefront
+window.width = 1280
+window.height = 720

@@ -1,22 +1,31 @@
 #include "Camera.h"
+#include <iostream>
+#include <algorithm>
+#include <cmath>
 
-Camera::Camera()
+static const double kPi = 3.14159265358979323846;
+
+Camera::Camera(int width, int height)
 {
-    // get viewport
-    GLint mViewport[4];
-    glGetIntegerv( GL_VIEWPORT, mViewport );
-    projectionMatrix = glm::perspective(45.0f, (float)mViewport[2] /(float) mViewport[3], 0.1f, 10000.0f);
-    horizontalAngle = M_PI; //3.1415926539
+    const float viewportWidth = static_cast<float>(width);
+    const float viewportHeight = static_cast<float>(height);
+    std::cout << "Camera viewport: " << viewportWidth << "x" << viewportHeight << std::endl; 
+    const float aspect = (viewportWidth > 0.0f && viewportHeight > 0.0f)
+        ? (viewportWidth / viewportHeight)
+        : (16.0f / 9.0f);
+    projectionMatrix = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
+    horizontalAngle = kPi;
     verticalAngle = 0.0;
     position = glm::vec3(0.0, 1.0, 0.0);
     aim(0.0, 0.0);
     update();
 }
 
+
 void Camera::aim(double x, double y)
 {
-    horizontalAngle += x;
-    verticalAngle += y;
+    horizontalAngle -= x;
+    verticalAngle = std::clamp(verticalAngle + y, -1.55, 1.55);
 
     direction = glm::vec3(
 		cos(verticalAngle) * sin(horizontalAngle),
@@ -24,9 +33,9 @@ void Camera::aim(double x, double y)
 		cos(verticalAngle) * cos(horizontalAngle)
 	);
     right = glm::vec3(
-		sin(horizontalAngle - M_PI/2.0),
+        sin(horizontalAngle - kPi/2.0),
 		0.0,
-		cos(horizontalAngle - M_PI/2.0)
+        cos(horizontalAngle - kPi/2.0)
 	);
 
     up = glm::cross(right, direction);
@@ -70,3 +79,4 @@ void Camera::update()
                           up
                       );
 }
+
