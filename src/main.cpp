@@ -592,8 +592,36 @@ void MyGLApp::start()
                 }
                 if (radius < 1.0f) radius = 1.0f;
 
-                camera->position = center + glm::vec3(0.0f, radius * 0.35f, radius * 2.5f);
-                camera->direction = glm::normalize(center - camera->position);
+                if (appConfig->hasVar("camera.position.x") &&
+                    appConfig->hasVar("camera.position.y") &&
+                    appConfig->hasVar("camera.position.z"))
+                {
+                    camera->position = glm::vec3(
+                        appConfig->getFloat("camera.position.x"),
+                        appConfig->getFloat("camera.position.y"),
+                        appConfig->getFloat("camera.position.z")
+                    );
+                    if (appConfig->hasVar("camera.target.x") &&
+                        appConfig->hasVar("camera.target.y") &&
+                        appConfig->hasVar("camera.target.z"))
+                    {
+                        glm::vec3 target(
+                            appConfig->getFloat("camera.target.x"),
+                            appConfig->getFloat("camera.target.y"),
+                            appConfig->getFloat("camera.target.z")
+                        );
+                        camera->direction = glm::normalize(target - camera->position);
+                    }
+                    else
+                    {
+                        camera->direction = glm::normalize(center - camera->position);
+                    }
+                }
+                else
+                {
+                    camera->position = center + glm::vec3(0.0f, radius * 0.35f, radius * 2.5f);
+                    camera->direction = glm::normalize(center - camera->position);
+                }
                 camera->horizontalAngle = std::atan2(camera->direction.x, camera->direction.z);
                 camera->verticalAngle = std::asin(std::clamp(camera->direction.y, -1.0f, 1.0f));
                 const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);

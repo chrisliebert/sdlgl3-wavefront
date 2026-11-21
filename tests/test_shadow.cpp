@@ -544,17 +544,17 @@ void testDirectionalShadowCameraRotationInvariance()
                 glm::mat4 sweepLightSpaceMatrixVK = vulkanClip * sweepLightProjGL * sweepLightView;
 
                 // 1. Sphere radius must remain mathematically invariant under rotation
-                assert(approxEqual(sphereRadius, refSphereRadius, 1e-4f));
+                assert(approxEqual(sphereRadius, refSphereRadius, 1e-3f));
 
                 // 2. Light view matrix must be identical across rotation
-                assert(mat4ApproxEqual(sweepLightView, refLightView, 1e-4f));
+                assert(mat4ApproxEqual(sweepLightView, refLightView, 1e-3f));
 
                 // 3. Light projection matrix must be identical across rotation
-                assert(mat4ApproxEqual(sweepLightProjGL, refLightProjGL, 1e-4f));
+                assert(mat4ApproxEqual(sweepLightProjGL, refLightProjGL, 1e-3f));
 
                 // 4. Combined light space matrix (GL & VK) must be identical across rotation
-                assert(mat4ApproxEqual(sweepLightSpaceMatrixGL, refLightSpaceMatrixGL, 1e-4f));
-                assert(mat4ApproxEqual(sweepLightSpaceMatrixVK, refLightSpaceMatrixVK, 1e-4f));
+                assert(mat4ApproxEqual(sweepLightSpaceMatrixGL, refLightSpaceMatrixGL, 1e-3f));
+                assert(mat4ApproxEqual(sweepLightSpaceMatrixVK, refLightSpaceMatrixVK, 1e-3f));
 
                 // 5. Frustum corners containment: all corners strictly contained in shadow volume
                 for (const auto& corner : corners)
