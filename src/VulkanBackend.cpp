@@ -669,8 +669,17 @@ void VulkanBackend::beginFrame(const struct FrameContext& frameContext)
     renderPassInfo.renderArea.extent = m_swapchainExtent;
 
     
+    float clearR = 0.0f, clearG = 0.0f, clearB = 0.0f, clearA = 1.0f;
+    if (m_renderer.configLoader)
+    {
+        if (m_renderer.configLoader->hasVar("renderer.clearColor.r")) clearR = m_renderer.configLoader->getFloat("renderer.clearColor.r");
+        if (m_renderer.configLoader->hasVar("renderer.clearColor.g")) clearG = m_renderer.configLoader->getFloat("renderer.clearColor.g");
+        if (m_renderer.configLoader->hasVar("renderer.clearColor.b")) clearB = m_renderer.configLoader->getFloat("renderer.clearColor.b");
+        if (m_renderer.configLoader->hasVar("renderer.clearColor.a")) clearA = m_renderer.configLoader->getFloat("renderer.clearColor.a");
+    }
+
     std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    clearValues[0].color = {{clearR, clearG, clearB, clearA}};
     clearValues[1].depthStencil = {1.0f, 0};
     
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
