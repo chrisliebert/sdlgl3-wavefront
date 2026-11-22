@@ -3,6 +3,7 @@
 A high-performance, production-grade 3D renderer starter focused on Wavefront OBJ loading, spatial scene culling, and dual-backend rendering (OpenGL 3.3+ baseline and modern Vulkan 1.2+). Built with SDL3, SDL3_image, GLM, and GLAD.
 
 ![screenshot 1](screenshot.png)
+*Model credit: The model in the screenshot is "Holiday Beach Cartoon Scene" (also listed under names like "Beach Scene Cartoon Style" or "Beach House") [[1](https://www.cgtrader.com/3d-models/architectural/engineering/beach-house-9bcb27c9-5c45-41e1-963e-f7ab77eae1ea), [2](https://open3dmodel.com/3d-models/collections/19-restaurant-most-popular-2022)].*
 
 ---
 
