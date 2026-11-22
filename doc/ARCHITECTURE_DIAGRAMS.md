@@ -17,48 +17,58 @@
 ```mermaid
 graph TB
     subgraph "Application Layer"
-        A[MyGLApp<br/>main.cpp]
+        A["MyGLApp<br/>main.cpp"]
     end
     
     subgraph "Rendering Layer"
-        B[Renderer<br/>Core Manager]
-        C[IRenderBackend<br/>Abstract Interface]
-        D[OpenGLBackend<br/>GL 3.3+ Impl]
+        B["Renderer<br/>Core Manager"]
+        F_B["RenderBackendFactory<br/>Factory Creation"]
+        C["IRenderBackend<br/>Abstract Interface"]
+        D["OpenGLBackend<br/>GL 3.3+ / 4.4+ Impl"]
+        E_B["VulkanBackend<br/>Vulkan 1.2+ Impl"]
     end
     
     subgraph "Scene Management"
-        E[SceneGraph<br/>Hierarchy]
-        F[SceneNode<br/>Geometry Data]
-        G[Material<br/>PBR Properties]
+        E["SceneGraph<br/>Hierarchy"]
+        F["SceneNode<br/>Geometry Data"]
+        G["Material<br/>PBR Properties"]
     end
     
-    subgraph "Graphics Resources"
-        H[GpuProgram<br/>Shader Wrapper]
-        I[ShaderCache<br/>Compilation Cache]
-        J[Texture<br/>Pixel Data]
+    subgraph "Graphics Resources & Pipelines"
+        H["GpuProgram<br/>GL Shader Wrapper"]
+        I["ShaderCache<br/>GL Compilation Cache"]
+        I_SPV["SPIR-V Pipeline<br/>Precompiled Shaders (.spv)"]
+        J["Texture / VulkanTexture<br/>Pixel & Image Data"]
+        U_UBO["FrameUniforms<br/>UBO / Push Constants"]
     end
     
     subgraph "Utilities"
-        K[Camera<br/>View/Proj Matrices]
-        L[Frustum<br/>Culling]
-        M[ConfigLoader<br/>Settings]
+        K["Camera<br/>View/Proj Matrices"]
+        L["Frustum<br/>Culling"]
+        M["ConfigLoader<br/>Settings"]
     end
     
     subgraph "External APIs"
-        N[OpenGL 3.3+]
-        O[SDL3 Window/Input]
-        P[tiny_obj_loader<br/>OBJ Parser]
+        N["OpenGL 3.3+ / 4.4+"]
+        N_VK["Vulkan 1.2+"]
+        O["SDL3 Window/Input"]
+        P["tiny_obj_loader<br/>OBJ Parser"]
     end
     
     A --> B
-    B --> C
-    D --> C
+    B --> F_B
+    F_B --> C
+    D -.->|implements| C
+    E_B -.->|implements| C
     D --> N
+    E_B --> N_VK
     B --> E
     E --> F
     F --> G
-    B --> H
+    D --> H
     H --> I
+    E_B --> I_SPV
+    E_B --> U_UBO
     F --> J
     B --> K
     B --> L
@@ -76,48 +86,58 @@ graph TB
 ```mermaid
 graph LR
     subgraph "Entry Point"
-        Main[main.cpp]
+        Main["main.cpp"]
     end
     
     subgraph "Core Systems"
-        App[MyGLApp]
-        Renderer[Renderer]
-        Backend[IRenderBackend / OpenGLBackend]
+        App["MyGLApp"]
+        Renderer["Renderer"]
+        Factory["RenderBackendFactory"]
+        Backend["IRenderBackend"]
+        GLBackend["OpenGLBackend"]
+        VKBackend["VulkanBackend"]
     end
     
     subgraph "Scene System"
-        SceneGraph[SceneGraph]
-        SceneNode[SceneNode]
-        Material[Material]
-        Texture[Texture]
+        SceneGraph["SceneGraph"]
+        SceneNode["SceneNode"]
+        Material["Material"]
+        Texture["Texture / VulkanTexture"]
     end
     
     subgraph "Graphics System"
-        GpuProgram[GpuProgram]
-        Shader[Shader + Cache]
-        Uniform[Uniform Types]
+        GpuProgram["GpuProgram (GL)"]
+        Shader["Shader + Cache"]
+        Uniform["UniformLoader (GL)"]
+        SpirvPipe["SPIR-V Graphics & Shadow Pipelines (VK)"]
+        FrameUbo["FrameUniforms UBO (VK)"]
     end
     
     subgraph "Math & Culling"
-        Camera[Camera]
-        Frustum[Frustum]
+        Camera["Camera"]
+        Frustum["Frustum"]
     end
     
     subgraph "I/O"
-        Config[ConfigLoader]
-        ObjLoader[tiny_obj_loader]
+        Config["ConfigLoader"]
+        ObjLoader["tiny_obj_loader"]
     end
     
     Main --> App
     App --> Renderer
-    Renderer --> Backend
+    Renderer --> Factory
+    Factory --> Backend
+    Backend --> GLBackend
+    Backend --> VKBackend
     Renderer --> SceneGraph
     SceneGraph --> SceneNode
     SceneNode --> Material
     SceneNode --> Texture
-    Renderer --> GpuProgram
+    GLBackend --> GpuProgram
     GpuProgram --> Shader
     Shader --> Uniform
+    VKBackend --> SpirvPipe
+    VKBackend --> FrameUbo
     Renderer --> Camera
     Renderer --> Frustum
     App --> Config
@@ -132,48 +152,83 @@ graph LR
 
 ```mermaid
 classDiagram
+    class RenderBackendFactory {
+        +createBackend(Renderer&, const ConfigLoader&, SDL_Window*&) unique_ptr~IRenderBackend~ static
+    }
+
     class IRenderBackend {
         <<interface>>
         +initialize(SDL_Window*) bool
         +shutdown() void
-        +beginFrame(FrameContext) void
+        +isOpenGL() const bool
         +submit(vector~RenderCommand~) void
-        +endFrame() void
-        +bufferToGpu(Camera&, string_view, bool) bool
-        +createShadowMap(Camera&) GLuint
-        +updateShadowMap(Camera&) void
+        +addTexture(GLuint*, const Texture*) void
+        +bufferToGpu(vector~Vertex~, vector~uint32_t~) bool
+        +createShadowMap(vector~SceneNode~) void
         +getShadowMapSize(int&, int&) const void
-        +takeScreenshot(string_view) void
+        +fitDirectionalShadowMatrix(Camera&, vec3, int, int, mat4&, mat4&, mat4&) void
+        +updateLightUniforms(const Camera&, const mat4&, const vec3&) void
+        +beginFrame(FrameContext) void
+        +endFrame() void
+        +initUIRendering() void
+        +shutdownUIRendering() void
+        +beginUIRender() void
+        +endUIRender() void
+        +captureFrame() unique_ptr~Capture_Frame~
     }
     
     class OpenGLBackend {
         -Renderer& owner
-        -SDL_Window* window
+        -SDL_Window* m_window
+        -SDL_GLContext m_glContext
         -bool usePersistentMappedVbo
         -GLuint vao, vbo, ibo
         -GLuint shadowMap, depthMapFBO
-        -GpuProgram* gpuProgram
-        -GpuProgram* shadowProgram
-        -bool useCascadedShadows
-        -int cascadeCount
-        -vector~GLuint~ cascadeShadowMaps
-        +fitDirectionalShadowMatrix() static void
-        +computeCascadeFarPlanes() static void
-        +enableCascadedShadows(int) void
-        +disableCascadedShadows() void
+        -unique_ptr~GpuProgram~ gpuProgram
+        -unique_ptr~GpuProgram~ shadowProgram
+        +initialize(SDL_Window*) bool
+        +shutdown() void
+        +isOpenGL() const bool
+        +submit(vector~RenderCommand~) void
+        +bufferToGpu(vector~Vertex~, vector~uint32_t~) bool
+        +createShadowMap(vector~SceneNode~) void
+        +fitDirectionalShadowMatrix(...) void
+        +updateLightUniforms(...) void
+        +beginFrame(FrameContext) void
+        +endFrame() void
+        +captureFrame() unique_ptr~Capture_Frame~
     }
     
-    class SdlGpuBackend {
-        <<optional>>
-        -Renderer& owner
-        -SDL_Window* window
-        -SDL_GpuDevice* device
-        -SDL_GpuBuffer* vbo, ibo
-        -SDL_GpuGraphicsPipeline* pipeline
+    class VulkanBackend {
+        -Renderer& m_renderer
+        -SDL_Window* m_window
+        -VkInstance m_instance
+        -VkDevice m_device
+        -VkQueue m_graphicsQueue, m_presentQueue
+        -VkSwapchainKHR m_swapchain
+        -VkRenderPass m_renderPass, m_shadowRenderPass
+        -VkPipeline m_graphicsPipeline, m_shadowPipeline
+        -VkBuffer m_vertexBuffer, m_indexBuffer
+        -VkBuffer m_frameUniformBuffer
+        -VkImage m_depthImage, m_shadowDepthImage
+        -VkFramebuffer m_shadowFramebuffer
+        -vector~VulkanTexture~ m_textures
+        +initialize(SDL_Window*) bool
+        +shutdown() void
+        +isOpenGL() const bool
+        +submit(vector~RenderCommand~) void
+        +bufferToGpu(vector~Vertex~, vector~uint32_t~) bool
+        +createShadowMap(vector~SceneNode~) void
+        +fitDirectionalShadowMatrix(...) void
+        +updateLightUniforms(...) void
+        +beginFrame(FrameContext) void
+        +endFrame() void
+        +captureFrame() unique_ptr~Capture_Frame~
     }
     
-    IRenderBackend <|-- OpenGLBackend
-    IRenderBackend <|-- SdlGpuBackend
+    IRenderBackend <|-- OpenGLBackend : implements
+    IRenderBackend <|-- VulkanBackend : implements
+    RenderBackendFactory ..> IRenderBackend : creates
 ```
 
 ### Shader System Hierarchy
@@ -435,26 +490,75 @@ flowchart TD
     A[Frame Start] --> B[update frameContext]
     B --> C{Shadows enabled?}
     
-    C -->|Yes| D[compute light frustum]
-    D --> E{Cascaded shadows?}
-    E -->|Yes| F[create cascade shadow maps]
-    E -->|No| G[create single shadow map]
-    F --> H[render shadow pass]
-    G --> H
+    C -->|Yes and Dirty| D["Pre-Pass Uniform Sync<br/>fitDirectionalShadowMatrix + updateLightUniforms"]
+    D --> E["Render Shadow Depth Pass<br/>OpenGL: depthMapFBO / Vulkan: shadowRenderPass"]
+    E --> F["Synchronize Frame Uniform Buffer / UBO<br/>Vulkan: FrameUniforms binding 2 / GL: UniformLoader"]
+    F --> G[beginFrame clear color/depth]
     
-    C -->|No| I[beginFrame clear color/depth]
-    H --> I
+    C -->|Yes and Clean| H["Pre-Pass Matrix Alignment<br/>fitDirectionalShadowMatrix + updateLightUniforms"]
+    H --> F
     
-    I --> J[extract frustum from VP matrix]
-    J --> K[collectVisibleNodes via AABB tree]
-    K --> L{Occlusion culling?}
-    L -->|Yes| M[query GPU occlusion results]
-    L -->|No| N[sort by texture ID]
-    M --> N
+    C -->|No| G
     
-    N --> O[submit render commands to backend]
-    O --> P[endFrame swap buffers]
-    P --> Q[update perf stats HUD]
+    G --> I[extract frustum from VP matrix]
+    I --> J[collectVisibleNodes via AABB tree]
+    J --> K{Occlusion culling?}
+    K -->|Yes| L[query GPU occlusion results]
+    K -->|No| M[sort by texture ID]
+    L --> M
+    
+    M --> N["submit render commands to backend<br/>Forward Pass with 16-Sample Poisson Disk PCF"]
+    N --> O[endFrame swap buffers]
+    O --> P[update perf stats HUD]
+```
+
+### Shadow Mapping Render Pass Flow
+
+```mermaid
+sequenceDiagram
+    participant R as Renderer
+    participant B as IRenderBackend (OpenGL / Vulkan)
+    participant UBO as Frame Uniforms (UBO / UniformLoader)
+    participant SM as Shadow Map Depth Buffer (2048x2048)
+    participant FS as Main Forward Pass (Poisson PCF)
+
+    Note over R,B: 1. Pre-Pass Uniform Synchronization
+    R->>B: fitDirectionalShadowMatrix(camera, lightPos, 2048, 2048)
+    Note over B: Compute scene-anchored orthographic light VP matrix
+    R->>B: updateLightUniforms(camera, lightSpaceMatrix, lightPos)
+    B->>UBO: Sync lightSpaceMatrix, lightPos, viewPos into UBO / uniforms
+
+    Note over R,SM: 2. Shadow Map Depth Buffer Pass
+    R->>B: createShadowMap(sceneNodes)
+    activate B
+    alt OpenGL Backend
+        B->>SM: glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO)
+        B->>SM: glViewport(0, 0, 2048, 2048) + glClear(GL_DEPTH_BUFFER_BIT)
+        B->>SM: Draw scene geometry using shadowProgram (depth-only)
+    else Vulkan Backend
+        B->>SM: vkCmdBeginRenderPass(m_shadowRenderPass, m_shadowFramebuffer)
+        B->>SM: vkCmdBindPipeline(m_shadowPipeline) with lightSpaceMatrix push constant
+        B->>SM: Draw scene geometry writing to VK_FORMAT_D32_SFLOAT image
+        B->>SM: vkCmdEndRenderPass()
+    end
+    deactivate B
+
+    Note over R,UBO: 3. Frame Uniform Buffer Synchronization
+    R->>B: beginFrame(frameContext)
+    B->>UBO: Update FrameUniforms (proj, view, lightSpaceMatrix, lightPos)
+
+    Note over R,FS: 4. Forward Lighting Pass with Poisson Disk PCF
+    R->>B: submit(renderCommands)
+    activate B
+    B->>FS: Transform fragment to light space: projCoords = lightSpaceMatrix * fragPos
+    B->>FS: Clamp / check out-of-bounds: unshadowed if outside [0, 1]^3
+    B->>FS: Compute adaptive slope bias: max(0.0015 * (1 - dot(n, l)), 0.00035)
+    loop 16 Poisson Disk Samples
+        B->>FS: Sample depth from shadowMap with Poisson disk offset * texelSize * filterRadius
+        B->>FS: Accumulate shadow factor: currentDepth - bias > sampleDepth ? 1.0 : 0.0
+    end
+    B->>FS: Average shadow factor (shadow / 16.0) and modulate diffuse lighting
+    deactivate B
 ```
 
 ---
