@@ -193,7 +193,7 @@ For more details on the unit test architecture and individual test suites, refer
 
 - **Production Playbook**: [doc/Production_Playbook.md](doc/Production_Playbook.md) — Top-down architectural design, frame graph flow, and lifecycle guide.
 - **Architecture Diagrams**: [doc/ARCHITECTURE_DIAGRAMS.md](doc/ARCHITECTURE_DIAGRAMS.md) — Visual system architecture and dataflow diagrams.
-- **PhD Critical Review**: [PHD_CRITICAL_REVIEW.md](PHD_CRITICAL_REVIEW.md) — Comprehensive technical review and mathematical proofs.
+- **Technical Critical Review**: [TECHNICAL_CRITICAL_REVIEW.md](TECHNICAL_CRITICAL_REVIEW.md) — Rigorous multi-dimensional architecture and implementation review.
 - **Interactive Testing Skill**: [.agents/skills/interactive-testing/SKILL.md](.agents/skills/interactive-testing/SKILL.md) — Automated visual testing framework.
 
 ---

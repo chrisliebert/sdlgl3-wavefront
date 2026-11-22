@@ -1,14 +1,14 @@
 # sdlgl3-wavefront: Remediation Plan and Implementation Guide
 
-**Prepared for:** PhD Review Board  
+**Prepared for:** Technical Review Board  
 **Date:** 2026-08-30  
-**Reference:** [`phd-defense-assessment.md`](./phd-defense-assessment.md)  
+**Reference:** [`architecture-assessment.md`](./architecture-assessment.md)  
 
 ---
 
 ## Executive Summary
 
-This remediation plan addresses the **9 critical (P0)** and **21 high-priority (P1)** findings from the PhD defense-style assessment. The plan is organized into four implementation phases, each with specific deliverables, verification criteria, and acceptance tests.
+This remediation plan addresses the **9 critical (P0)** and **21 high-priority (P1)** findings from the technical architecture assessment. The plan is organized into four implementation phases, each with specific deliverables, verification criteria, and acceptance tests.
 
 ### Current State Summary
 
@@ -372,6 +372,6 @@ The remediation plan is considered complete when:
 
 ---
 
-*Prepared for PhD Review Board consideration.*  
+*Prepared for Technical Review Board consideration.*  
 *Date: 2026-08-30*  
-*Reference: PhD Defense Assessment (phd-defense-assessment.md)*
+*Reference: Technical Architecture Assessment (architecture-assessment.md)*

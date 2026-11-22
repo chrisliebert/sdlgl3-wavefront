@@ -1,4 +1,4 @@
-# PhD-Style Multi-Board Critical Code Review: SDL3 + OpenGL 3.3 Wavefront Viewer
+# Technical Multi-Board Critical Code Review: SDL3 + OpenGL 3.3 Wavefront Viewer
 
 **Project:** [`sdlgl3-wavefront`](../)  
 **Review Date:** 2026-08-10  

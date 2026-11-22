@@ -1,8 +1,8 @@
-# PhD Review Board Response: sdlgl3-wavefront Codebase Assessment
+# Technical Review Response: sdlgl3-wavefront Codebase Assessment
 
-**Document Type:** Formal Response to PhD Defense-Style Critical Assessment  
+**Document Type:** Formal Response to Technical Architecture Critical Assessment  
 **Project:** sdlgl3-wavefront -- SDL3/OpenGL 3.3 Wavefront OBJ Renderer  
-**Assessment Reference:** [`phd-defense-assessment.md`](./phd-defense-assessment.md)  
+**Assessment Reference:** [`architecture-assessment.md`](./architecture-assessment.md)  
 **Response Date:** 2026-08-30  
 **Responding Party:** Project Principal Engineer  
 
@@ -40,7 +40,7 @@ The project team **accepts** the overall health score of B- (72/100) as a fair a
 **Team Response:** We accept this finding as valid. The swap was introduced during a previous refactoring and was not caught because the project primarily uses symmetric perspective cameras. For symmetric cameras, left/right are mathematically equivalent, which is why the bug remained latent.
 
 **Remediation Commitment:** 
-- Fix applied in [`phd-remediation-plan.md`](./phd-remediation-plan.md): Fix 1.1
+- Fix applied in [`architecture-remediation-plan.md`](./architecture-remediation-plan.md): Fix 1.1
 - Verification: Test with asymmetric camera projection (off-center frustum)
 - Timeline: Immediate (Phase 1)
 
@@ -304,7 +304,7 @@ The project team **accepts** the overall health score of B- (72/100) as a fair a
 
 ## Board's Methodology Assessment
 
-The PhD defense-style assessment methodology is **accepted as rigorous and appropriate** for this codebase. Specifically:
+The technical architecture assessment methodology is **accepted as rigorous and appropriate** for this codebase. Specifically:
 
 1. **Multi-board approach** (8 independent verification dimensions) provides comprehensive coverage
 2. **Severity classification** (P0-P3) enables prioritized remediation
@@ -334,8 +334,8 @@ The project team commits to completing all Phase 1 remediation within **one week
 
 ---
 
-*Response prepared by Project Principal Engineer for PhD Review Board consideration.*  
+*Response prepared by Project Principal Engineer for Technical Review Board consideration.*  
 *Date: 2026-08-30*  
 *Reference documents:*
-- *Assessment: [`phd-defense-assessment.md`](./phd-defense-assessment.md)*
-- *Remediation Plan: [`phd-remediation-plan.md`](./phd-remediation-plan.md)*
+- *Assessment: [`architecture-assessment.md`](./architecture-assessment.md)*
+- *Remediation Plan: [`architecture-remediation-plan.md`](./architecture-remediation-plan.md)*
