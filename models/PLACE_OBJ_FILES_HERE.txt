@@ -1,0 +1,20 @@
+# OBJ Model Directory
+# ===================
+# This directory contains 3D models in Wavefront .OBJ format for the sdlgl3-wavefront renderer.
+#
+# Available Models:
+# -----------------
+# 1. lowpoly_dragon.obj - A low-poly dragon head with horns, snout, and jaw (RECOMMENDED)
+# 2. test.obj - Minimal debug triangle model
+#
+# To add more models:
+# - Download free .OBJ files from these sources:
+#   * https://www.kenney.nl/assets (CC0 public domain game assets)
+#   * https://sketchfab.com/features/models (filter by "downloadable")
+#   * https://free3d.com (free section)
+#   * https://archive.blender.org/ (Blender foundation models)
+# - Place .obj files in this directory
+# - Reference them in your application code
+#
+# Note: External downloads may fail due to CORS/network restrictions.
+# You can also manually download from the URLs above and copy files here.

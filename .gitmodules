@@ -1,0 +1,24 @@
+[submodule "dependencies/glm"]
+	path = dependencies/glm
+	url = https://github.com/g-truc/glm.git
+	branch = master
+
+[submodule "dependencies/glad"]
+	path = dependencies/glad
+	url = https://github.com/Dav1dde/glad.git
+	branch = master
+
+[submodule "dependencies/tinyobjloader"]
+	path = dependencies/tinyobjloader
+	url = https://github.com/tinyobjloader/tinyobjloader.git
+	branch = master
+
+[submodule "dependencies/sdl3"]
+	path = dependencies/sdl3
+	url = https://github.com/libsdl-org/SDL.git
+	branch = release-3.4.12
+
+[submodule "dependencies/sdl3_image"]
+	path = dependencies/sdl3_image
+	url = https://github.com/libsdl-org/SDL_image.git
+	branch = release-3.4.4
